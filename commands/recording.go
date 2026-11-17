@@ -237,9 +237,11 @@ type RecordingRuntime struct {
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
 	running map[string]*activeRecording
-	// letIn maps a recorder's user ID to the channel the runtime gave it an
-	// overwrite on, until its leave removes it.
-	letIn map[string]string
+	// letIn holds each recorder and channel the runtime gave an overwrite,
+	// until the recorder's leave there removes it. A recorder a cut short
+	// freed can start in another channel before that leave runs, so the
+	// channel is part of the key.
+	letIn map[recorderInChannel]bool
 
 	// recordCommandID is /record's ID, empty until the startup sync has
 	// registered the commands.
@@ -305,7 +307,7 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		panelURL:  panelURL,
 		builtAt:   recordingNow(),
 		running:   make(map[string]*activeRecording),
-		letIn:     make(map[string]string),
+		letIn:     make(map[recorderInChannel]bool),
 	}
 	recordingAfterFunc(0, r.sweepRetention)
 	recordingAfterFunc(0, r.recoverWhenListed)
@@ -361,13 +363,13 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 	defer cancelJoin()
 	conn, err := r.voice.Join(joinCtx, recorderID, r.guildID, channelID)
 	if errors.Is(err, voice.ErrRecorderOffline) {
-		r.letRecorderOut(recorderID)
+		r.letRecorderOut(recorderID, channelID)
 		r.release(recorderID)
 		utils.Info(recorderStillOfflineMessage, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecorderComingBack
 	}
 	if err != nil {
-		r.letRecorderOut(recorderID)
+		r.letRecorderOut(recorderID, channelID)
 		r.release(recorderID)
 		captureError("Recorder failed to join", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
@@ -707,18 +709,22 @@ func (r *RecordingRuntime) letRecorderIn(recorderID, channelID string) error {
 		return err
 	}
 	r.mu.Lock()
-	r.letIn[recorderID] = channelID
+	r.letIn[recorderInChannel{recorderID, channelID}] = true
 	r.mu.Unlock()
 	return nil
 }
 
-// letRecorderOut removes the overwrite letRecorderIn gave a recorder, if it
-// gave one. One that won't go is a WARN line: it lets a recorder in, which
-// harms nothing.
-func (r *RecordingRuntime) letRecorderOut(recorderID string) {
+// recorderInChannel is a recorder and a channel it was let into.
+type recorderInChannel struct{ recorderID, channelID string }
+
+// letRecorderOut removes the overwrite letRecorderIn gave a recorder on a
+// channel, if it gave one. One that won't go is a WARN line: it lets a
+// recorder in, which harms nothing.
+func (r *RecordingRuntime) letRecorderOut(recorderID, channelID string) {
+	key := recorderInChannel{recorderID, channelID}
 	r.mu.Lock()
-	channelID, ok := r.letIn[recorderID]
-	delete(r.letIn, recorderID)
+	ok := r.letIn[key]
+	delete(r.letIn, key)
 	r.mu.Unlock()
 	if !ok {
 		return
@@ -735,7 +741,7 @@ func (r *RecordingRuntime) letRecorderOut(recorderID string) {
 // Either way the overwrite that let the recorder in goes after. leave
 // reports whether the leave ran past its deadline.
 func (r *RecordingRuntime) leave(conn voice.Conn, recorderID, channelID string) (late bool) {
-	defer r.letRecorderOut(recorderID)
+	defer r.letRecorderOut(recorderID, channelID)
 	ctx, cancel := context.WithTimeout(context.Background(), recordingLeaveTimeout)
 	defer cancel()
 	// left carries whether the leave ran past its deadline, judged the
