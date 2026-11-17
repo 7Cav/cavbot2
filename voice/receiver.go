@@ -208,6 +208,9 @@ type receiver struct {
 	// heldPerSSRC, which the log has warned of. Only the receiver's
 	// goroutine touches it.
 	overflowed map[uint32]bool
+	// streams tallies what each SSRC brought, for the summary the log
+	// gives at close. Only the receiver's goroutine touches it.
+	streams map[uint32]*streamTally
 	// failing is each speaker's run of frames DAVE has failed to decrypt
 	// since their last that decrypted, and unreadable counts the datagrams
 	// the UDP connection has failed to read since its last good one. Only
@@ -414,8 +417,48 @@ func newReceiver(conn receiveConn, l Listener, recorderID string) *receiver {
 		done:       make(chan struct{}),
 		held:       make(map[uint32][]datagram),
 		overflowed: make(map[uint32]bool),
+		streams:    make(map[uint32]*streamTally),
 		failing:    make(map[snowflake.ID]*speakerRun),
 	}
+}
+
+// streamTally is what one SSRC brought the receiver: its voice packets,
+// the first and last at their arrival, and the speaker it last mapped to,
+// zero while it never has. Each packet is a frame handed over, one DAVE
+// refused, one dropped while the SSRC was unmapped, or one still held.
+type streamTally struct {
+	userID      snowflake.ID
+	packets     int
+	handedOver  int
+	refused     int
+	dropped     int
+	first, last time.Time
+}
+
+// streamSummaryMessage is the INFO line the log gives for each SSRC as the
+// receiver closes. Packets that stop early name Discord, packets dropped
+// or held name an unmapped SSRC, and packets refused name DAVE.
+const streamSummaryMessage = "Voice stream summary"
+
+// summarize logs one line for each SSRC the receiver heard, once, as its
+// goroutine ends.
+func (r *receiver) summarize() {
+	for ssrc, t := range r.streams {
+		utils.Info(streamSummaryMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn), "ssrc", ssrc, "user_id", t.userID.String(),
+			"packets", t.packets, "handed_over", t.handedOver, "refused", t.refused,
+			"dropped_unmapped", t.dropped, "held_at_close", len(r.held[ssrc]),
+			"first_packet", t.first, "last_packet", t.last)
+	}
+}
+
+// stream is the tally of an SSRC, made at its first packet.
+func (r *receiver) stream(ssrc uint32) *streamTally {
+	t := r.streams[ssrc]
+	if t == nil {
+		t = &streamTally{}
+		r.streams[ssrc] = t
+	}
+	return t
 }
 
 // open starts reading.
@@ -430,6 +473,7 @@ func (r *receiver) close() {
 
 func (r *receiver) run() {
 	defer close(r.done)
+	defer r.summarize()
 	for r.ctx.Err() == nil {
 		r.step()
 	}
@@ -780,10 +824,17 @@ const unmappedOverflowMessage = "Voice frames dropped, SSRC not mapped"
 func (r *receiver) receive(d datagram) {
 	ssrc := d.packet.SSRC
 	userID := r.conn.UserIDBySSRC(ssrc)
+	t := r.stream(ssrc)
+	t.packets++
+	if t.first.IsZero() {
+		t.first = d.at
+	}
+	t.last = d.at
 	if userID == 0 {
 		held := append(r.held[ssrc], d)
 		if len(held) > heldPerSSRC {
 			held = held[1:]
+			t.dropped++
 			if !r.overflowed[ssrc] {
 				r.overflowed[ssrc] = true
 				utils.Warn(unmappedOverflowMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn), "ssrc", ssrc)
@@ -824,7 +875,10 @@ func (r *receiver) deliver(userID snowflake.ID, d datagram) {
 	user := godave.UserID(userID.String())
 	out := make([]byte, dave.MaxDecryptedFrameSize(user, len(p.Opus)))
 	n, err := dave.Decrypt(user, p.Opus, out)
+	t := r.stream(p.SSRC)
+	t.userID = userID
 	if err != nil {
+		t.refused++
 		r.speakerFailed(userID, err)
 		r.decryptFailed(d.at, userID)
 		return
@@ -838,5 +892,6 @@ func (r *receiver) deliver(userID snowflake.ID, d datagram) {
 	}
 	delete(r.failing, userID)
 	r.reportFailing()
+	t.handedOver++
 	r.listener.Frame(Frame{UserID: userID.String(), SSRC: p.SSRC, Timestamp: p.Timestamp, Opus: out[:n]})
 }

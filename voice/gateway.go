@@ -303,7 +303,7 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 			g.build = func() disgovoice.Gateway {
 				var gw disgovoice.Gateway
 				observe := disgovoice.WithGatewayCloseObserver(func(err error) { g.closeObserved(gw, err) })
-				gw = newGateway(dave, g.watchEvents(onEvent), g.onDrop, append(opts[:len(opts):len(opts)], observe)...)
+				gw = newGateway(dave, g.watchEvents(c.logMembers(onEvent)), g.onDrop, append(opts[:len(opts):len(opts)], observe)...)
 				return gw
 			}
 			g.gw = g.build()
@@ -311,6 +311,47 @@ func (c *recorderConn) connOpts(newGateway disgovoice.GatewayCreateFunc, logger 
 			return g
 		}),
 	}
+}
+
+// The INFO lines logMembers logs, which trace a speaker missing from a
+// recording to their stream.
+const (
+	ssrcMappedMessage    = "Voice SSRC mapped"
+	clientsJoinedMessage = "Voice clients joined"
+	clientLeftMessage    = "Voice client left"
+)
+
+// logMembers wraps onEvent to log the voice server's word of who is in the
+// call: an SSRC mapped to a speaker, each time it maps to someone new, and
+// each join and leave. Discord can send op 5 again for a mapping it sent.
+func (c *recorderConn) logMembers(onEvent disgovoice.EventHandlerFunc) disgovoice.EventHandlerFunc {
+	return func(gw disgovoice.Gateway, op disgovoice.Opcode, seq int, data disgovoice.GatewayMessageData) {
+		switch d := data.(type) {
+		case disgovoice.GatewayMessageDataSpeaking:
+			if c.mapSSRC(d.SSRC, d.UserID) {
+				utils.Info(ssrcMappedMessage, "recorder", c.userID.String(), "user_id", d.UserID.String(), "ssrc", d.SSRC)
+			}
+		case disgovoice.GatewayMessageDataClientsConnect:
+			utils.Info(clientsJoinedMessage, "recorder", c.userID.String(), "user_ids", d.UserIDs)
+		case disgovoice.GatewayMessageDataClientDisconnect:
+			utils.Info(clientLeftMessage, "recorder", c.userID.String(), "user_id", d.UserID.String())
+		}
+		onEvent(gw, op, seq, data)
+	}
+}
+
+// mapSSRC notes ssrc mapped to userID, and reports whether that is new.
+func (c *recorderConn) mapSSRC(ssrc uint32, userID snowflake.ID) bool {
+	c.ssrcsMu.Lock()
+	defer c.ssrcsMu.Unlock()
+	if c.ssrcs[ssrc] == userID {
+		return false
+	}
+	if c.ssrcs == nil {
+		c.ssrcs = make(map[uint32]snowflake.ID)
+	}
+	c.ssrcs[ssrc] = userID
+	return true
 }
 
 // errorsAsWarnings hands each record on to next, at WARN when it was logged
@@ -411,6 +452,11 @@ type recorderConn struct {
 	// it stops, nil while it doesn't.
 	deafenedAt time.Time
 	undeafened chan struct{}
+
+	// ssrcs is the speaker each SSRC was last mapped to, as the log last
+	// told of it.
+	ssrcsMu sync.Mutex
+	ssrcs   map[uint32]snowflake.ID
 }
 
 // errConnClosed is what disgo gets for a voice state update on a connection
