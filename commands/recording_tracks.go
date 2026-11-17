@@ -52,7 +52,14 @@ type track struct {
 	started bool
 	ssrc    uint32
 	nextTS  uint32
+	// rewound is whether the log has warned of the track's RTP clock
+	// jumping back.
+	rewound bool
 }
+
+// trackRewoundMessage is the WARN a track logs once when its speaker's RTP
+// timestamps jump back on the same SSRC, which the wall clock then places.
+const trackRewoundMessage = "Track RTP timestamps jumped back"
 
 // maxRTPDrift is how far a packet's RTP timestamp may disagree with the
 // clock before the clock places it instead: 2 s, in 48 kHz samples.
@@ -121,8 +128,13 @@ func (tracks *recordingTracks) write(f voice.Frame, arrival time.Time) {
 	if t.err != nil {
 		return
 	}
-	if err := t.place(f, tracks.samplesAt(arrival)); err != nil {
+	rewound, err := t.place(f, tracks.samplesAt(arrival))
+	if err != nil {
 		tracks.fail(f.UserID, t, err)
+	}
+	if rewound && !t.rewound {
+		t.rewound = true
+		utils.Warn(trackRewoundMessage, "recording_id", tracks.recordingID, "user_id", f.UserID)
 	}
 }
 
@@ -138,18 +150,22 @@ func (tracks *recordingTracks) samplesAt(at time.Time) int64 {
 // packet, or their first after rejoining. Those packets are placed by the
 // wall clock. After that the RTP timestamps place each packet, because
 // they're exact where arrival jitters, unless they disagree with the wall
-// clock by more than 2 s. Then the wall clock wins. A packet whose timestamp
-// is behind the track, reordered or duplicated, is dropped.
-func (t *track) place(f voice.Frame, wallClock int64) error {
+// clock by more than 2 s. Then the wall clock wins. A packet up to 2 s
+// behind the track, reordered or duplicated, is dropped. One further behind
+// means the stream's RTP clock jumped back, so the wall clock places it and
+// place reports rewound.
+func (t *track) place(f voice.Frame, wallClock int64) (rewound bool, err error) {
 	wallGap := wallClock - int64(t.ogg.granule)
 	gap := wallGap
 	if t.started && f.SSRC == t.ssrc {
-		gap = int64(int32(f.Timestamp - t.nextTS))
-		if gap < 0 {
-			return nil
-		}
-		if gap-wallGap > maxRTPDrift || wallGap-gap > maxRTPDrift {
-			gap = wallGap
+		rtpGap := int64(int32(f.Timestamp - t.nextTS))
+		switch {
+		case rtpGap < -maxRTPDrift:
+			rewound = true
+		case rtpGap < 0:
+			return false, nil
+		case rtpGap-wallGap <= maxRTPDrift && wallGap-rtpGap <= maxRTPDrift:
+			gap = rtpGap
 		}
 	}
 	t.started, t.ssrc = true, f.SSRC
@@ -157,10 +173,10 @@ func (t *track) place(f voice.Frame, wallClock int64) error {
 	t.nextTS = f.Timestamp + uint32(samples)
 	for ; gap >= opusSilenceSamples; gap -= opusSilenceSamples {
 		if err := t.ogg.writePacket(opusSilence, opusSilenceSamples); err != nil {
-			return err
+			return rewound, err
 		}
 	}
-	return t.ogg.writePacket(f.Opus, samples)
+	return rewound, t.ogg.writePacket(f.Opus, samples)
 }
 
 // end fills the track with silence to the recording's end, so it lasts the

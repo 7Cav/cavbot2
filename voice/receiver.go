@@ -204,6 +204,10 @@ type receiver struct {
 	// their frames still DAVE-encrypted, since DAVE decrypts as a user.
 	// Only the receiver's goroutine touches it.
 	held map[uint32][]datagram
+	// overflowed is the SSRCs whose held frames have gone past
+	// heldPerSSRC, which the log has warned of. Only the receiver's
+	// goroutine touches it.
+	overflowed map[uint32]bool
 	// failing is each speaker's run of frames DAVE has failed to decrypt
 	// since their last that decrypted, and unreadable counts the datagrams
 	// the UDP connection has failed to read since its last good one. Only
@@ -401,15 +405,16 @@ func newReceiver(conn receiveConn, l Listener, recorderID string) *receiver {
 		told = losses
 	}
 	return &receiver{
-		told:     told,
-		conn:     conn,
-		listener: l,
-		recorder: recorderID,
-		ctx:      ctx,
-		cancel:   cancel,
-		done:     make(chan struct{}),
-		held:     make(map[uint32][]datagram),
-		failing:  make(map[snowflake.ID]*speakerRun),
+		told:       told,
+		conn:       conn,
+		listener:   l,
+		recorder:   recorderID,
+		ctx:        ctx,
+		cancel:     cancel,
+		done:       make(chan struct{}),
+		held:       make(map[uint32][]datagram),
+		overflowed: make(map[uint32]bool),
+		failing:    make(map[snowflake.ID]*speakerRun),
 	}
 }
 
@@ -764,6 +769,11 @@ func (r *receiver) pause(d time.Duration) {
 	}
 }
 
+// unmappedOverflowMessage is the WARN an SSRC logs once when op 5 has left
+// it unmapped for longer than its held frames cover, so its oldest are
+// dropped: a speaker missing from the recording.
+const unmappedOverflowMessage = "Voice frames dropped, SSRC not mapped"
+
 // receive hands a datagram's packet over as the user its SSRC maps to,
 // after any frames held on that SSRC, or holds it while the SSRC maps to no
 // one.
@@ -774,6 +784,10 @@ func (r *receiver) receive(d datagram) {
 		held := append(r.held[ssrc], d)
 		if len(held) > heldPerSSRC {
 			held = held[1:]
+			if !r.overflowed[ssrc] {
+				r.overflowed[ssrc] = true
+				utils.Warn(unmappedOverflowMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn), "ssrc", ssrc)
+			}
 		}
 		r.held[ssrc] = held
 		return
