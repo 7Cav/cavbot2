@@ -548,6 +548,37 @@ func TestRecordStartJoinsARecorderAndWritesItsRow(t *testing.T) {
 	}
 }
 
+// A recorder can join the channel it records for as long as the recording
+// runs, even in a channel its roles don't reach, and the channel's
+// overwrites are as they were once it stops (#958). An overwrite the
+// recorder already had there stays as it was.
+func TestRecordLetsTheRecorderIntoItsChannelForTheRecording(t *testing.T) {
+	recorder := permMember{id: testRecorder}
+	for _, tc := range []struct {
+		name       string
+		overwrites []*discordgo.PermissionOverwrite
+	}{
+		{"channel the recorder can't see", permCategoryOverwrites()},
+		{"recorder already let in by an admin", append(permCategoryOverwrites(),
+			&discordgo.PermissionOverwrite{ID: testRecorder, Type: discordgo.PermissionOverwriteTypeMember, Allow: permJoin | discordgo.PermissionSendMessages})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := newRecordScene(t, testRecorder)
+			sc.fake.channels[recordChannel].PermissionOverwrites = tc.overwrites
+
+			sc.startIn(t, recStarter, recordChannel)
+			if !canJoin(t, sc.fake.overwritesOf(t, recordChannel), recorder) {
+				t.Errorf("recorder can't join %s while recording, want it let in", recordChannel)
+			}
+			sc.stopAsStarter(t)
+
+			if got := sc.fake.overwritesOf(t, recordChannel); !sameOverwrites(got, tc.overwrites) {
+				t.Errorf("overwrites after the stop = %v, want them as before the start, %v", got, tc.overwrites)
+			}
+		})
+	}
+}
+
 // recordRefusal is one /record start refusal: a scene with the recorders
 // given, a setup that leaves one precondition unmet for the caller, or two
 // where the row pins which refusal wins, and what the reply must and must
@@ -658,6 +689,16 @@ var recordRefusals = []recordRefusal{
 		},
 		carries: []string{noRecordingRoleRefusal},
 		lacks:   []string{alreadyRecordedRefusal},
+	},
+	{
+		name:      "recorder can't be let into the channel",
+		recorders: []string{testRecorder},
+		setup: func(_ *testing.T, sc *recordScene) permMember {
+			sc.fake.permissionSetErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
+			sc.fake.setVoice(recStarter.id, recordChannel)
+			return recStarter
+		},
+		carries: []string{recorderNotLetInRefusal},
 	},
 	{
 		name: "recording off",

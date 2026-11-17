@@ -583,6 +583,13 @@ func (f *fakeDiscord) ChannelPermissionSet(_, _ string, _ discordgo.PermissionOv
 	return nil
 }
 
+// ChannelPermissionDelete accepts every overwrite delete, as
+// ChannelPermissionSet accepts every set.
+func (f *fakeDiscord) ChannelPermissionDelete(_, _, _ string) error {
+	f.countWrite()
+	return nil
+}
+
 // CanSeeChannel answers that everyone sees every channel. The panel's tests
 // let nobody in; the fake carries it for the interface.
 func (f *fakeDiscord) CanSeeChannel(_, _ string, _ []string) (bool, error) {
