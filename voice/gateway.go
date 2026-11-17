@@ -333,8 +333,6 @@ func (c *recorderConn) logMembers(onEvent disgovoice.EventHandlerFunc) disgovoic
 			}
 		case disgovoice.GatewayMessageDataClientsConnect:
 			utils.Info(clientsJoinedMessage, "recorder", c.userID.String(), "user_ids", d.UserIDs)
-		case disgovoice.GatewayMessageDataClientConnect:
-			utils.Info(clientsJoinedMessage, "recorder", c.userID.String(), "user_ids", []snowflake.ID{d.UserID})
 		case disgovoice.GatewayMessageDataClientDisconnect:
 			utils.Info(clientLeftMessage, "recorder", c.userID.String(), "user_id", d.UserID.String())
 		}

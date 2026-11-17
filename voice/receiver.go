@@ -209,7 +209,7 @@ type receiver struct {
 	// goroutine touches it.
 	overflowed map[uint32]bool
 	// streams tallies what each SSRC brought, for the summary the log
-	// gives at close. Only the receiver's goroutine touches it until close.
+	// gives at close. Only the receiver's goroutine touches it.
 	streams map[uint32]*streamTally
 	// failing is each speaker's run of frames DAVE has failed to decrypt
 	// since their last that decrypted, and unreadable counts the datagrams
@@ -440,7 +440,8 @@ type streamTally struct {
 // or held name an unmapped SSRC, and packets refused name DAVE.
 const streamSummaryMessage = "Voice stream summary"
 
-// summarize logs one line for each SSRC the receiver heard.
+// summarize logs one line for each SSRC the receiver heard, once, as its
+// goroutine ends.
 func (r *receiver) summarize() {
 	for ssrc, t := range r.streams {
 		utils.Info(streamSummaryMessage, "recorder", r.recorder, "channel_id", channelOf(r.conn), "ssrc", ssrc, "user_id", t.userID.String(),
@@ -468,11 +469,11 @@ func (r *receiver) open() { go r.run() }
 func (r *receiver) close() {
 	r.cancel()
 	<-r.done
-	r.summarize()
 }
 
 func (r *receiver) run() {
 	defer close(r.done)
+	defer r.summarize()
 	for r.ctx.Err() == nil {
 		r.step()
 	}
