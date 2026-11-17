@@ -394,7 +394,8 @@ _Avoid_: stale event, out-of-order event, late event, race.
 **Ownership notice**:
 The bot message in a spawned channel's text chat that names the current
 owner, or says there is none. Posted when the channel is created and at
-every handover. It pings nobody.
+every handover. It pings nobody. On a hub with renaming on, it offers the
+owner channel names built from their billets as buttons.
 _Avoid_: announcement, banner, status line, welcome message.
 
 **Moderator role**:

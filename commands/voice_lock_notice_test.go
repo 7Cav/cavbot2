@@ -25,6 +25,7 @@ import (
 var componentRoutes = map[string]func(utils.InteractionResponder, *TempVC, *discordgo.InteractionCreate){
 	voiceLockCommandName:   runVoiceLock,
 	voiceUnlockCommandName: runVoiceUnlock,
+	voiceRenameCommandName: runVoiceRename,
 }
 
 // pressInteraction builds the interaction a press on a button with the

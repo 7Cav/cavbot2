@@ -296,6 +296,14 @@ The hub page failed whenever Discord's API was slow, answered 502 or had its rat
 | The Discord time split #402 added for #395 goes: the read clocks and `ReadTiming`, and the seam's `Guild` returns the guild alone again. A timed-out page's report keeps its store reads. The startup Administrator check keeps reading the guild from the API. | Maintainer, #400 Q7 |
 | **Broken hub** in `GLOSSARY.md` says the panel works the state out each time it shows the hub and never stores it, where it said the panel reads it "fresh", which read as asking Discord each time. No glossary term for the gateway state, which is a Discord-bot idea rather than the regiment's. No ADR: going back to the API is cheap. | Maintainer, #400 Q10 |
 
+## Settled for #959 (name suggestions, 2026-11-17)
+
+| Decision | Provenance |
+|---|---|
+| An ownership notice with an owner, on a hub with renaming on, carries up to five buttons, one row, with names built from the owner's milpac billets: a `<level> Lounge` for each level of a billet's unit, battalion first; `🚦 <unit> HQ` for Commander, Commanding Officer, Executive Officer, First Sergeant and Sergeant Major; `<unit> SP` (section practice) for Section Leader and Assistant Section Leader; `<department> Lounge` for a billet with no unit that starts with a department word (S6, RRD). Platoon Leader and Platoon Sergeant get lounges alone. A handover notice gets buttons from the new owner's billets. A failed lookup posts the notice with no buttons. | Maintainer, #959 |
+| Names related to the hub come first: a unit name when any level of its unit is in the hub's base string or category name, a department name when its word or "department" is, an HQ name also when "HQ" is. The base string counts as well as the category because live categories miss units ("3rd Battalion" for 3-7). Rejected: a per-hub unit setting, which needs a panel field and a migration. | Maintainer, #959 |
+| A press follows `/voice-rename`'s rule on the channel the button names: the current owner or a hub moderator, renaming on, two renames in ten minutes. The presser need not sit in the channel. The name rides in the CustomID, so a press needs no stored state. The notice reads "... can rename it with /voice-rename or a button below." | Maintainer, #959 (mock A) |
+
 ## Open, as tickets on map #255
 
 None. Every ticket is closed as of 2026-09-15.

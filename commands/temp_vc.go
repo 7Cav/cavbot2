@@ -175,7 +175,7 @@ type SpawnFailure struct {
 // final, so a returning creator is an ordinary occupant. Ranks are read from
 // the roles the gateway payloads carry, against the ladder below, most
 // senior first; a member holding none of its roles, or holding the
-// Discharged role, is never a candidate. No API call per create or handover.
+// Discharged role, is never a candidate. The election makes no API call.
 
 // rankRole pairs a rank abbreviation with its Discord role ID. The abbreviation
 // is documentation only; the roleID is what the election matches against a
@@ -876,6 +876,10 @@ type TempVC struct {
 	// once before any gateway event reaches the runtime and never changed,
 	// so it is read without mu.
 	recorders map[string]struct{}
+	// milpacByDiscordID looks up an owner's billets for the ownership
+	// notice's name suggestions (temp_vc_name_suggestions.go). Nil offers
+	// none. Set once before any gateway event, so read without mu.
+	milpacByDiscordID func(ctx context.Context, discordID string) (*utils.ProfileResponse, error)
 }
 
 type memberSpawn struct {
@@ -1177,6 +1181,7 @@ func StartTempVC(dg *discordgo.Session, mgr TempVCManager, guildID string, st st
 		return nil, err
 	}
 	t.ignoreRecorders(recorders)
+	t.milpacByDiscordID = utils.GetMilpacByDiscordID
 
 	t.mu.Lock()
 	hubCount := len(t.hubs)
@@ -2229,13 +2234,20 @@ func (t *TempVC) stillInHub(userID, hubChannelID string) bool {
 // and pings nobody. The voice channel status line is not used. A failed send
 // is a WARN line: the ownership change itself has already happened. The
 // hub's "Renaming allowed" is read here, at post time, so a notice already
-// posted keeps the line it was posted with (#360).
+// posted keeps the line it was posted with (#360). An owner on a hub with
+// renaming on also gets name suggestion buttons (#959).
 func (t *TempVC) postOwnershipNotice(channelID string, event noticeEvent, owner string) {
 	t.mu.Lock()
 	renamingAllowed := t.renamingAllowedLocked(channelID)
+	hub, _ := t.hubByIDLocked(t.channelHub[channelID])
 	t.mu.Unlock()
+	var suggestions []discordgo.MessageComponent
+	if owner != "" && renamingAllowed {
+		suggestions = t.nameSuggestionButtons(channelID, owner, hub.BaseString)
+	}
 	_, err := t.mgr.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content:         ownershipNoticeLine(event, owner, renamingAllowed),
+		Content:         ownershipNoticeLine(event, owner, renamingAllowed, len(suggestions) > 0),
+		Components:      suggestions,
 		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}},
 	})
 	if err != nil {
@@ -2250,8 +2262,9 @@ func (t *TempVC) postOwnershipNotice(channelID string, event noticeEvent, owner 
 // ownerless channel and never created one still learns it. The command is
 // plain text, not a command mention. On a hub with renaming off the owner
 // lines drop the rename clause and still name the owner, who may lock where
-// the hub allows it (#360); the lines for no owner do not change.
-func ownershipNoticeLine(event noticeEvent, owner string, renamingAllowed bool) string {
+// the hub allows it (#360); the lines for no owner do not change. A notice
+// with name suggestions points at them too (#959).
+func ownershipNoticeLine(event noticeEvent, owner string, renamingAllowed, suggestions bool) string {
 	switch {
 	case event == noticeCreate && owner == "":
 		return "This channel has no owner. The first Cav member to join it becomes the owner."
@@ -2262,8 +2275,11 @@ func ownershipNoticeLine(event noticeEvent, owner string, renamingAllowed bool) 
 	if event == noticeHandover {
 		owns = fmt.Sprintf("<@%s> now owns this channel", owner)
 	}
-	if !renamingAllowed {
+	switch {
+	case !renamingAllowed:
 		return owns + "."
+	case suggestions:
+		return fmt.Sprintf("%s and can rename it with /%s or a button below.", owns, voiceRenameCommandName)
 	}
 	return fmt.Sprintf("%s and can rename it with /%s.", owns, voiceRenameCommandName)
 }
