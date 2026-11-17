@@ -149,8 +149,11 @@ const (
 	// recorderComingBackRefusal answers a start whose recorder was still
 	// logging back in, after a cut short, when its wait ran out.
 	recorderComingBackRefusal = "❌ The recorder is coming back online. Try /record start again in a minute."
-	nothingToStopRefusal      = "❌ There's no recording here for you to stop."
-	notAllowedToStopRefusal   = "❌ Only the person who started this recording, or someone with a recording role, can stop it."
+	// recorderNotLetInRefusal answers a start whose recorder Discord
+	// wouldn't let into the channel.
+	recorderNotLetInRefusal = "❌ The bot can't let the recorder into this channel."
+	nothingToStopRefusal    = "❌ There's no recording here for you to stop."
+	notAllowedToStopRefusal = "❌ Only the person who started this recording, or someone with a recording role, can stop it."
 )
 
 // recordTitleTooLongRefusal answers a start whose title is over
@@ -181,6 +184,8 @@ func startRefusal(err error) (reply string, refused bool) {
 		return starterRecordingRefusal, true
 	case errors.Is(err, errRecorderComingBack):
 		return recorderComingBackRefusal, true
+	case errors.Is(err, errRecorderNotLetIn):
+		return recorderNotLetInRefusal, true
 	case errors.As(err, &busy):
 		mentions := make([]string, len(busy.ChannelIDs))
 		for i, id := range busy.ChannelIDs {

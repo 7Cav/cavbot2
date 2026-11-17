@@ -335,6 +335,11 @@ type TempVCManager interface {
 	// target's existing overwrite, so the caller sends every bit it means to
 	// keep. A guest add sends one member overwrite.
 	ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error
+	// ChannelPermissionDelete removes one target's overwrite from a channel,
+	// with the given audit-log reason and no retry on rate limit. The
+	// recording runtime removes the overwrite that let a recorder in through
+	// it.
+	ChannelPermissionDelete(channelID, targetID, auditReason string) error
 	// ChannelMessageEditComplex edits a message the bot posted, with no
 	// retry on rate limit. The edit names its channel and message, and
 	// carries the new content and components: a pointer to an empty list
@@ -721,6 +726,11 @@ func (m *sessionTempVCManager) CachedMemberRoles(guildID string) map[string][]st
 func (m *sessionTempVCManager) ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error {
 	return m.s.ChannelPermissionSet(channelID, targetID, targetType, allow, deny,
 		auditLogReason(auditReason), discordgo.WithRetryOnRatelimit(true))
+}
+
+func (m *sessionTempVCManager) ChannelPermissionDelete(channelID, targetID, auditReason string) error {
+	return m.s.ChannelPermissionDelete(channelID, targetID,
+		auditLogReason(auditReason), discordgo.WithRetryOnRatelimit(false))
 }
 
 func (m *sessionTempVCManager) ChannelMessageEditComplex(edit *discordgo.MessageEdit) (*discordgo.Message, error) {

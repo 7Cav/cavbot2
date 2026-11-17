@@ -96,6 +96,19 @@ var (
 	// errRecorderComingBack: the start took an offline recorder, which
 	// didn't log back in within the join's deadline.
 	errRecorderComingBack = errors.New("recording: the recorder is still logging back in")
+	// errRecorderNotLetIn: Discord refused the overwrite that lets the
+	// recorder into the channel.
+	errRecorderNotLetIn = errors.New("recording: the recorder could not be let into the channel")
+)
+
+// recorderAccess is what a recorder's overwrite allows on the channel it
+// records: joining it.
+const recorderAccess = discordgo.PermissionViewChannel | discordgo.PermissionVoiceConnect
+
+// The audit-log reasons of the overwrite that lets a recorder in.
+const (
+	recorderLetInReason  = "recording started"
+	recorderLetOutReason = "recording ended"
 )
 
 // recorderStillOfflineMessage is the INFO line of a start refused because
@@ -192,6 +205,10 @@ type RecordingManager interface {
 	// GuildMemberDeafen is TempVCManager's. It lifts a server deafen a
 	// recorder joined with.
 	GuildMemberDeafen(guildID, userID string, deaf bool) error
+	// ChannelPermissionSet and ChannelPermissionDelete are TempVCManager's.
+	// They add and remove the overwrite that lets a recorder in.
+	ChannelPermissionSet(channelID, targetID string, targetType discordgo.PermissionOverwriteType, allow, deny int64, auditReason string) error
+	ChannelPermissionDelete(channelID, targetID, auditReason string) error
 }
 
 // RecordingRuntime holds the recordings running now. Built on every host
@@ -220,6 +237,11 @@ type RecordingRuntime struct {
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
 	running map[string]*activeRecording
+	// letIn holds each recorder and channel the runtime gave an overwrite,
+	// until the recorder's leave there removes it. A recorder a cut short
+	// freed can start in another channel before that leave runs, so the
+	// channel is part of the key.
+	letIn map[recorderInChannel]bool
 
 	// recordCommandID is /record's ID, empty until the startup sync has
 	// registered the commands.
@@ -285,6 +307,7 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		panelURL:  panelURL,
 		builtAt:   recordingNow(),
 		running:   make(map[string]*activeRecording),
+		letIn:     make(map[recorderInChannel]bool),
 	}
 	recordingAfterFunc(0, r.sweepRetention)
 	recordingAfterFunc(0, r.recoverWhenListed)
@@ -330,15 +353,23 @@ func (r *RecordingRuntime) Start(by Invoker, title string) (channelID string, er
 		return "", err
 	}
 
+	if err := r.letRecorderIn(recorderID, channelID); err != nil {
+		r.release(recorderID)
+		utils.Warn("Start refused, the recorder could not be let in", "recorder", recorderID, "channel_id", channelID, "error", err)
+		return "", errRecorderNotLetIn
+	}
+
 	joinCtx, cancelJoin := context.WithTimeout(context.Background(), recordingJoinTimeout)
 	defer cancelJoin()
 	conn, err := r.voice.Join(joinCtx, recorderID, r.guildID, channelID)
 	if errors.Is(err, voice.ErrRecorderOffline) {
+		r.letRecorderOut(recorderID, channelID)
 		r.release(recorderID)
 		utils.Info(recorderStillOfflineMessage, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecorderComingBack
 	}
 	if err != nil {
+		r.letRecorderOut(recorderID, channelID)
 		r.release(recorderID)
 		captureError("Recorder failed to join", err, "recorder", recorderID, "channel_id", channelID)
 		return "", errRecordingFailed
@@ -663,12 +694,54 @@ func (r *RecordingRuntime) reserveLocked(recorderID, channelID, starterID string
 	r.running[recorderID] = &activeRecording{row: store.Recording{ChannelID: channelID, StarterID: starterID}}
 }
 
+// letRecorderIn gives a recorder a member overwrite that lets it join the
+// channel it is about to record, which its roles may not reach. Discord
+// ignores a join to a channel the recorder can't see, so without it the
+// join would wait out its deadline (#958). An overwrite the recorder has
+// there already is left as it is.
+func (r *RecordingRuntime) letRecorderIn(recorderID, channelID string) error {
+	if ch, err := r.mgr.Channel(channelID); err == nil && slices.ContainsFunc(ch.PermissionOverwrites, func(o *discordgo.PermissionOverwrite) bool {
+		return o.ID == recorderID && o.Type == discordgo.PermissionOverwriteTypeMember
+	}) {
+		return nil
+	}
+	if err := r.mgr.ChannelPermissionSet(channelID, recorderID, discordgo.PermissionOverwriteTypeMember, recorderAccess, 0, recorderLetInReason); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.letIn[recorderInChannel{recorderID, channelID}] = true
+	r.mu.Unlock()
+	return nil
+}
+
+// recorderInChannel is a recorder and a channel it was let into.
+type recorderInChannel struct{ recorderID, channelID string }
+
+// letRecorderOut removes the overwrite letRecorderIn gave a recorder on a
+// channel, if it gave one. One that won't go is a WARN line: it lets a
+// recorder in, which harms nothing.
+func (r *RecordingRuntime) letRecorderOut(recorderID, channelID string) {
+	key := recorderInChannel{recorderID, channelID}
+	r.mu.Lock()
+	ok := r.letIn[key]
+	delete(r.letIn, key)
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	if err := r.mgr.ChannelPermissionDelete(channelID, recorderID, recorderLetOutReason); err != nil {
+		utils.Warn("Recorder overwrite not removed", "recorder", recorderID, "channel_id", channelID, "error", err)
+	}
+}
+
 // leave takes a recorder out of its channel, and waits no longer than
 // recordingLeaveTimeout, the deadline it hands the leave. When a leave runs
 // past it, as one frozen in the voice adapter does, leave logs a WARN and
 // returns to its caller. The leave finishes on its own goroutine, if ever.
-// leave reports whether the leave ran past its deadline.
+// Either way the overwrite that let the recorder in goes after. leave
+// reports whether the leave ran past its deadline.
 func (r *RecordingRuntime) leave(conn voice.Conn, recorderID, channelID string) (late bool) {
+	defer r.letRecorderOut(recorderID, channelID)
 	ctx, cancel := context.WithTimeout(context.Background(), recordingLeaveTimeout)
 	defer cancel()
 	// left carries whether the leave ran past its deadline, judged the

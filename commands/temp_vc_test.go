@@ -563,6 +563,17 @@ func (f *fakeTempVCManager) ChannelPermissionSet(channelID, targetID string, tar
 	return nil
 }
 
+// ChannelPermissionDelete removes the target's overwrite from the channel,
+// as Discord does. A channel the bot never created or edited starts from
+// the list the fake cache holds for it.
+func (f *fakeTempVCManager) ChannelPermissionDelete(channelID, targetID, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	list, _ := f.currentOverwritesLocked(channelID)
+	f.overwrites[channelID] = slices.DeleteFunc(list, func(o *discordgo.PermissionOverwrite) bool { return o.ID == targetID })
+	return nil
+}
+
 // ChannelMessageEditComplex records the edit as sent, or returns
 // messageEditErr and records nothing. A message the fake let through and
 // deleted since is Unknown Message, as Discord answers.

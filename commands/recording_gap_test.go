@@ -446,6 +446,35 @@ func TestRecordingCutShortByAGapDoesNotWaitOnTheLeave(t *testing.T) {
 	})
 }
 
+// A recorder a cut short freed can start in another channel before the cut
+// short's leave gives up. That leave takes the recorder's way into the cut
+// short's channel alone, so the new recording keeps its own (#958).
+func TestRecordingCutShortRecorderStartingElsewhereKeepsItsWayIn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder)
+		recorder := permMember{id: testRecorder}
+		sc.fake.channels[recordChannel].PermissionOverwrites = permCategoryOverwrites()
+		sc.fake.channels[recordOtherChannel].PermissionOverwrites = permCategoryOverwrites()
+		sc.startIn(t, recStarter, recordChannel)
+		sc.voice.setLeaveTakes(hungLeave)
+		t.Cleanup(func() { time.Sleep(hungLeave) })
+		sc.listener(t, recordChannel).GapStarted(time.Now(), voice.GapVoiceGatewayClosed)
+		time.Sleep(gapCutsShortAfter)
+		synctest.Wait()
+
+		sc.startIn(t, recHolder, recordOtherChannel)
+
+		if !canJoin(t, sc.fake.overwritesOf(t, recordOtherChannel), recorder) {
+			t.Errorf("recorder can't join %s while recording it, want it let in", recordOtherChannel)
+		}
+		if canJoin(t, sc.fake.overwritesOf(t, recordChannel), recorder) {
+			t.Errorf("recorder still let into %s after its cut short, want it out", recordChannel)
+		}
+		sc.voice.setLeaveTakes(0)
+		recordAs(t, sc.rt, recHolder, "stop")
+	})
+}
+
 // pingsIn is every message still up in a channel's chat that would ping
 // someone.
 func pingsIn(fake *fakeTempVCManager, channelID string) []fakeMessage {
