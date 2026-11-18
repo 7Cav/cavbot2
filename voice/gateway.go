@@ -340,6 +340,18 @@ func (c *recorderConn) logMembers(onEvent disgovoice.EventHandlerFunc) disgovoic
 	}
 }
 
+// UserIDBySSRC is the speaker op 5 last mapped ssrc to, zero for none, in
+// place of disgo's lookup. disgo's op 13 handler deletes one SSRC of the
+// leaving user at random, and a speaker whose client reconnects can get
+// the op 13 for their old connection after the op 5 for their new SSRC, so
+// disgo can delete the SSRC they still speak on. An SSRC nobody holds any
+// more does no harm, and op 5 maps a reused one anew.
+func (c *recorderConn) UserIDBySSRC(ssrc uint32) snowflake.ID {
+	c.ssrcsMu.Lock()
+	defer c.ssrcsMu.Unlock()
+	return c.ssrcs[ssrc]
+}
+
 // mapSSRC notes ssrc mapped to userID, and reports whether that is new.
 func (c *recorderConn) mapSSRC(ssrc uint32, userID snowflake.ID) bool {
 	c.ssrcsMu.Lock()
@@ -453,8 +465,8 @@ type recorderConn struct {
 	deafenedAt time.Time
 	undeafened chan struct{}
 
-	// ssrcs is the speaker each SSRC was last mapped to, as the log last
-	// told of it.
+	// ssrcs is the speaker op 5 last mapped each SSRC to. op 13 leaves it
+	// alone (UserIDBySSRC).
 	ssrcsMu sync.Mutex
 	ssrcs   map[uint32]snowflake.ID
 }
