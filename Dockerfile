@@ -2,7 +2,7 @@
 # moving to a new Go, by hand or by a Dependabot update, changes this line
 # alone. Keep it one exact release. The gate fails a floating tag such as
 # golang:1.27, and fails a toolchain line in go.mod.
-FROM golang:1.27.2 AS builder
+FROM golang:1.27.3 AS builder
 
 ARG VERSION=dev
 
