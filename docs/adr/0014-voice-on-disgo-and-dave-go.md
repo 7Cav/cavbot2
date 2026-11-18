@@ -63,9 +63,9 @@ the main one. The main bot never joins voice. The throwaway prototype on
 v0.20.0 is the first release with the #593 fix (disgo#594). The bot pins a
 later master commit instead, for disgo#559, which v0.20.0 lacks. disgo#559
 puts locks on the voice gateway's heartbeat, seq and SSRC state, and the
-recorders run that gateway. Before it, a close right after HELLO could miss
-the heartbeat goroutine. That goroutine could then see a missed ACK and
-reconnect a gateway the recorder had closed.
+recorders run that gateway. Before it, disgo's heartbeat ticker and read
+loop raced on every heartbeat the voice server answered, in every recording
+(#880).
 
 The #593 fix no longer reaches the bot. Since #573 the recorder reads RTP
 through its own UDP connection (`voice/udp.go`), which tests the padding bit

@@ -2741,6 +2741,70 @@ func TestRecorderVoiceConnectionLogsReachTheBotLogAtDebug(t *testing.T) {
 	}
 }
 
+// A recording on disgo's own voice gateway stays on its first connection
+// while its voice server answers each heartbeat, under -race too (#880).
+func TestARecordingKeepsItsConnectionWhileItsHeartbeatsAreAnswered(t *testing.T) {
+	const interval, answers = 100 * time.Millisecond, 4
+	udp := newFakeVoiceServer(t)
+	answered := make(chan struct{}, answers)
+	var accepted atomic.Int32
+	server := newLocalVoiceServer(t, func(_ int32, conn *websocket.Conn) {
+		accepted.Add(1)
+		sendOp(t, conn, disgovoice.OpcodeHello, disgovoice.GatewayMessageDataHello{HeartbeatInterval: float64(interval.Milliseconds())}, 0)
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var m struct {
+				Op disgovoice.Opcode `json:"op"`
+				D  struct {
+					T int64 `json:"t"`
+				} `json:"d"`
+			}
+			if json.Unmarshal(data, &m) != nil {
+				continue
+			}
+			switch m.Op {
+			case disgovoice.OpcodeIdentify:
+				go udp.answerDiscovery(t)
+				sendOp(t, conn, disgovoice.OpcodeReady, disgovoice.GatewayMessageDataReady{SSRC: 42, IP: "127.0.0.1", Port: udp.port(),
+					Modes: []disgovoice.EncryptionMode{disgovoice.EncryptionModeAEADAES256GCMRTPSize}}, 0)
+			case disgovoice.OpcodeSelectProtocol:
+				sendOp(t, conn, disgovoice.OpcodeSessionDescription, disgovoice.GatewayMessageDataSessionDescription{
+					Mode: disgovoice.EncryptionModeAEADAES256GCMRTPSize, SecretKey: make([]byte, 32)}, 0)
+			case disgovoice.OpcodeHeartbeat:
+				sendOp(t, conn, disgovoice.OpcodeHeartbeatACK, disgovoice.GatewayMessageDataHeartbeatACK{T: m.D.T}, 0)
+				select {
+				case answered <- struct{}{}:
+				default:
+				}
+			}
+		}
+	})
+	h := newCallHarness(t)
+	h.serving = server.endpoint()
+	h.useDisgoGateway(server.dialer())
+	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
+	defer cancel()
+	conn, err := h.s.Join(ctx, callGuild.String(), callChannel.String())
+	if err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	defer conn.Leave(context.Background())
+
+	for i := range answers {
+		select {
+		case <-answered:
+		case <-time.After(waitFor):
+			t.Fatalf("voice server answered %d heartbeats, want %d", i, answers)
+		}
+	}
+	if n := accepted.Load(); n != 1 {
+		t.Errorf("voice server accepted %d connections, want 1", n)
+	}
+}
+
 // unreachableDialer is a voice gateway dialer that can't reach any voice
 // server, as when the host's resolver doesn't know its hostname. dials
 // hears each dial.
