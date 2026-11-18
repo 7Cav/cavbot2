@@ -1556,6 +1556,31 @@ func TestRecorderStartsTheGapOfASilentVoiceServerAtItsLastMessage(t *testing.T) 
 	})
 }
 
+// A speaker whose client reconnects comes back on a new SSRC, and Discord
+// can send the op 13 for their old connection after the op 5 for the new
+// one. The speaker is still in the call, so the receiver still finds them
+// by every SSRC op 5 mapped to them.
+func TestRecorderKeepsASpeakersSSRCsThroughALateClientDisconnect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newCallHarness(t)
+		h.transportOnly.Store(true)
+		conn := h.start()
+		defer h.hangUp(conn)
+		const newSSRC = callSpeakerSSRC + 1
+		server := h.connected
+		server.speaking()
+		server.onEvent(server, disgovoice.OpcodeSpeaking, 0, disgovoice.GatewayMessageDataSpeaking{SSRC: newSSRC, UserID: callSpeaker})
+		server.onEvent(server, disgovoice.OpcodeClientDisconnect, 0, disgovoice.GatewayMessageDataClientDisconnect{UserID: callSpeaker})
+
+		heard := callConn{conn.(*disgoConn).conn}
+		for _, ssrc := range []uint32{callSpeakerSSRC, newSSRC} {
+			if got := heard.UserIDBySSRC(ssrc); got != callSpeaker {
+				t.Errorf("SSRC %d maps to %v after the late op 13, want %v", ssrc, got, callSpeaker)
+			}
+		}
+	})
+}
+
 // A 4022 has the recorder ask Discord's API whether the channel is still
 // there, and the answer can take the lookup's full 5 s. The recorder could
 // not hear the call from the close on, so the gap the recording hears
