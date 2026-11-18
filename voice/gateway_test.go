@@ -2774,6 +2774,9 @@ func TestARecordingKeepsItsConnectionWhileItsHeartbeatsAreAnswered(t *testing.T)
 				sendOp(t, conn, disgovoice.OpcodeSessionDescription, disgovoice.GatewayMessageDataSessionDescription{
 					Mode: disgovoice.EncryptionModeAEADAES256GCMRTPSize, SecretKey: make([]byte, 32)}, 0)
 			case disgovoice.OpcodeHeartbeat:
+				// disgo notes the heartbeat sent once its write returns. An ACK
+				// read before that looks missed, and disgo reconnects.
+				time.Sleep(interval / 10)
 				sendOp(t, conn, disgovoice.OpcodeHeartbeatACK, disgovoice.GatewayMessageDataHeartbeatACK{T: m.D.T}, 0)
 				select {
 				case answered <- struct{}{}:
