@@ -37,7 +37,12 @@ func newBubbleRecordScene(t *testing.T, recorders ...string) *recordScene {
 	sc := newRecordScene(t, recorders...)
 	prevNow, prevAfter := recordingNow, recordingAfterFunc
 	recordingNow, recordingAfterFunc = productionRecordingNow, productionRecordingAfterFunc
-	t.Cleanup(func() { recordingNow, recordingAfterFunc = prevNow, prevAfter })
+	t.Cleanup(func() {
+		// The race detector takes only Wait, not passing bubble time, as
+		// ordering the clock reads of the runtime's goroutines before this.
+		synctest.Wait()
+		recordingNow, recordingAfterFunc = prevNow, prevAfter
+	})
 	return sc
 }
 
