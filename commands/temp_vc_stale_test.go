@@ -473,7 +473,7 @@ func TestTempVCRefusedCompensatingDeleteKeepsTheChannelWithAnOwner(t *testing.T)
 			if tc.wantOwner != "" && !strings.Contains(notices[0].data.Content, tc.wantOwner) {
 				t.Errorf("notice %q does not name the owner %s", notices[0].data.Content, tc.wantOwner)
 			}
-			if tc.wantOwner == "" && notices[0].data.Content != ownershipNoticeLine(noticeCreate, "", true) {
+			if tc.wantOwner == "" && notices[0].data.Content != ownershipNoticeLine(noticeCreate, "", true, false) {
 				t.Errorf("notice %q, want the ownerless create line", notices[0].data.Content)
 			}
 			if lines := logRecordsWith(t, logs, "INFO", map[string]string{"reason": "channel occupied", "channel_id": "new-chan"}); len(lines) != 1 {
@@ -517,7 +517,7 @@ func TestTempVCHandoverSkipsASuccessorTheCacheShowsGone(t *testing.T) {
 			if len(notices) != 2 {
 				t.Fatalf("notices = %d, want the create notice and one handover notice", len(notices))
 			}
-			if notices[1].data.Content != ownershipNoticeLine(noticeHandover, tc.wantOwner, true) {
+			if notices[1].data.Content != ownershipNoticeLine(noticeHandover, tc.wantOwner, true, false) {
 				t.Errorf("handover notice %q, want the line for owner %q", notices[1].data.Content, tc.wantOwner)
 			}
 

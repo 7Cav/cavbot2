@@ -94,8 +94,25 @@ type renameResult struct {
 // current channel from the runtime's own occupancy tracking. The edit call
 // carries an audit log reason naming the invoker and no retry on rate limit.
 func (t *TempVC) Rename(by Invoker, name string) (renameResult, error) {
+	return t.rename(by, name, func() (string, error) { return t.invokerSpawnedChannelLocked(by) })
+}
+
+// renameFromNotice renames the channel a name suggestion button names, under
+// Rename's rule. The presser need not sit in the channel. A channel the
+// runtime no longer tracks is gone.
+func (t *TempVC) renameFromNotice(by Invoker, channelID, name string) (renameResult, error) {
+	return t.rename(by, name, func() (string, error) {
+		if _, tracked := t.occupants[channelID]; !tracked {
+			return "", errChannelGone
+		}
+		return channelID, nil
+	})
+}
+
+// rename is Rename on the channel resolve returns, which runs under mu.
+func (t *TempVC) rename(by Invoker, name string, resolve func() (string, error)) (renameResult, error) {
 	t.mu.Lock()
-	channelID, err := t.invokerSpawnedChannelLocked(by)
+	channelID, err := resolve()
 	if err != nil {
 		t.mu.Unlock()
 		return renameResult{}, err

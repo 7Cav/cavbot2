@@ -78,8 +78,14 @@ func VoiceRename(tv *TempVC) Command {
 
 // runVoiceRename is the handler behind the responder seam (ADR 0004). It
 // defers an ephemeral reply first, so every outcome below is an edit of that
-// one reply and nothing the invoker sees is public.
+// one reply and nothing the invoker sees is public. A press on a name
+// suggestion reaches the same handler (ADR 0007) and goes to
+// runRenameSuggestion.
 func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *discordgo.InteractionCreate) {
+	if interaction.Type == discordgo.InteractionMessageComponent {
+		runRenameSuggestion(r, tv, interaction)
+		return
+	}
 	if err := deferEphemeral(r, interaction); err != nil {
 		replyAckFailed(r, interaction, err)
 		return
@@ -126,8 +132,13 @@ func runVoiceRename(r utils.InteractionResponder, tv *TempVC, interaction *disco
 	utils.Info("Temp VC renamed",
 		"command", voiceRenameCommandName, "username", username, "discord_id", discordID,
 		"channel_id", result.ChannelID, "before", result.Before, "after", result.After)
-	editEphemeral(r, interaction, fmt.Sprintf("✅ Renamed to **%s**.", result.After))
+	editEphemeral(r, interaction, renamedReply(result.After))
 	utils.Info("✨ Done!", "command", voiceRenameCommandName)
+}
+
+// renamedReply answers a rename that went through.
+func renamedReply(name string) string {
+	return fmt.Sprintf("✅ Renamed to **%s**.", name)
 }
 
 // voiceAction names what a voice command does, for the refusals the voice
