@@ -1,6 +1,8 @@
 # Voice runs on disgo's voice package and dave-go, inside the bot
 
 Status: accepted. Decided in the grilling of #10, before any implementation.
+**Amended 2026-11-17**: the pin stays on master, past v0.20.0, for disgo's
+voice gateway race fixes. See *Amendment: the pin moves past v0.20.0*.
 
 Discord enforces DAVE end-to-end encryption on every non-stage voice call, and
 no discordgo release can join voice at all. The bot keeps discordgo for the
@@ -46,7 +48,7 @@ the main one. The main bot never joins voice. The throwaway prototype on
   same environment as the main bot's, so least privilege would protect
   nothing.
 - Move off the master pin to the first disgo release that carries the #593
-  fix.
+  fix. *Superseded by the 2026-11-17 amendment.*
 - disgo's default audio receiver is replaced. It busy-spins while DAVE is not
   ready and stops for good after a voice reconnect.
 - A panic in the voice code would take down temp VC and every command with
@@ -55,3 +57,18 @@ the main one. The main bot never joins voice. The throwaway prototype on
   entry.
 - dave-go has one author and no audit. If it goes stale or breaks on a
   protocol change, swap in golibdave.
+
+## Amendment: the pin moves past v0.20.0 (2026-11-17)
+
+v0.20.0 is the first release with the #593 fix (disgo#594). The bot pins a
+later master commit instead, for disgo#559, which v0.20.0 lacks. disgo#559
+puts locks on the voice gateway's heartbeat, seq and SSRC state, and the
+recorders run that gateway. Before it, a close right after HELLO could miss
+the heartbeat goroutine. That goroutine later saw a missed ACK and closed and
+reconnected the gateway, which cut a gap in the recording.
+
+The #593 fix no longer reaches the bot. Since #573 the recorder reads RTP
+through its own UDP connection (`voice/udp.go`), which tests the padding bit
+at 0x20.
+
+Move off the master pin to the first disgo release that carries disgo#559.

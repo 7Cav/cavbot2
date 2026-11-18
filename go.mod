@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/disgoorg/disgo v0.19.7-0.20261023185300-5bf95ebe8a0d
+	github.com/disgoorg/disgo v0.20.1-0.20261116223422-05fe0f6826ff
 	github.com/disgoorg/godave v0.3.0
 	github.com/disgoorg/snowflake/v2 v2.0.3
 	github.com/getsentry/sentry-go v0.50.0
