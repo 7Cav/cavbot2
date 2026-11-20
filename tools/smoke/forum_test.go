@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/7cav/cavbot2/store"
 	"golang.org/x/oauth2"
 )
 
@@ -125,12 +126,26 @@ type meBody struct {
 }
 
 // Each persona must come out of the bot's group check as its label says,
-// given the group IDs a fake-forum run hands the bot.
+// given the group IDs a fake-forum run hands the bot: the admin group in its
+// env, and the forum groups up seeds over ones an earlier run saved.
 func TestFakeForumSignsInEachPersonaWithTheAccessTheBotIsConfiguredFor(t *testing.T) {
 	overrides := smokeOverrides(forumFake, pgDSN, "")
 	adminGroup, _ := strconv.Atoi(overrides["PANEL_GROUP_IDS"])
-	foxholeGroup, _ := strconv.Atoi(overrides["FOXHOLE_GROUP_ID"])
-	in := func(groups []int, id int) bool { return slices.Contains(groups, id) }
+	ctx, st := context.Background(), store.NewFake()
+	earlier := store.ForumGroups{FoxholeGroupID: 400, JoinersGroupIDs: []int{registeredGroupID}}
+	if err := st.SaveForumGroups(ctx, "guild-1", earlier, store.ChangeLogEntry{Action: store.ChangeForumGroups, Diff: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedForumGroups(ctx, st, "guild-1"); err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := st.GetForumGroups(ctx, "guild-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := func(groups []int, ids ...int) bool {
+		return slices.ContainsFunc(groups, func(g int) bool { return slices.Contains(ids, g) })
+	}
 
 	tests := []struct {
 		key                    string
@@ -159,8 +174,11 @@ func TestFakeForumSignsInEachPersonaWithTheAccessTheBotIsConfiguredFor(t *testin
 			if got := in(groups, adminGroup); got != tt.wantAdmin {
 				t.Errorf("panel admin = %v, want %v (groups %v)", got, tt.wantAdmin, groups)
 			}
-			if got := in(groups, foxholeGroup); got != tt.wantFoxhole {
+			if got := in(groups, seeded.FoxholeGroupID); got != tt.wantFoxhole {
 				t.Errorf("Foxhole manager = %v, want %v (groups %v)", got, tt.wantFoxhole, groups)
+			}
+			if in(groups, seeded.JoinersGroupIDs...) {
+				t.Errorf("Joiners viewer, want none (groups %v, Joiners groups %v)", groups, seeded.JoinersGroupIDs)
 			}
 			if body.Me.UserID == 0 || body.Me.Username == "" {
 				t.Errorf("/api/me named no user: %+v", body.Me)

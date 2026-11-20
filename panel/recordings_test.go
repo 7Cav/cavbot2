@@ -753,6 +753,7 @@ func TestRecordingsPageOfSomeoneWithNoRecordings(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.who, func(t *testing.T) {
 			w := newTestWorld(t)
+			seedForumGroups(t, w.st)
 			a := w.addStarter(5001, "Able.A", "discord-a")
 			w.record(t, a.discordID)
 			follow(t, w.b, signInAs(t, w.forum, w.b, tc.add(w.forum)))

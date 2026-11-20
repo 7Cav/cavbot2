@@ -10,10 +10,10 @@
 // filters and each holder's note, starts a purge and a re-add of the
 // approved Foxholers through the Foxhole runtime and shows its progress
 // and report, and keeps its own change log of saves and reports. The
-// Settings page is the rank roles and the recording roles, each with its
-// change log. The Metrics page shows panel admins the server's Discord
-// activity in group totals. The Joiners page lists each week's new members
-// by AO role.
+// Settings page is the rank roles, the recording roles, the AO roles and
+// the forum groups, each with its change log. The Metrics page shows panel
+// admins the server's Discord activity in group totals. The Joiners page
+// lists each week's new members by AO role.
 package panel
 
 import (
@@ -74,8 +74,9 @@ const forumTimeout = 10 * time.Second
 const hubPageBudget = 10 * time.Second
 
 // storeTimeout bounds one store call a save makes, the way the runtime bounds
-// its own. The save as a whole has no deadline: it outlives the request, and a
-// database that stops answering fails it at the call that stalled.
+// its own, and the group check's read of the forum groups. The save as a
+// whole has no deadline: it outlives the request, and a database that stops
+// answering fails it at the call that stalled.
 const storeTimeout = 5 * time.Second
 
 // New builds a panel from a config and what the hub page acts through. It
@@ -142,7 +143,7 @@ func (p *Panel) Start() error {
 		}
 	}()
 	utils.Info("Panel listening", "addr", ln.Addr().String(), "base_url", p.cfg.BaseURL,
-		"admin_group_ids", p.cfg.AdminGroupIDs, "foxhole_group_id", p.cfg.FoxholeGroupID, "joiners_group_ids", p.cfg.JoinersGroupIDs)
+		"admin_group_ids", p.cfg.AdminGroupIDs)
 	return nil
 }
 
@@ -207,6 +208,7 @@ func (p *Panel) routes() []route {
 		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
 		{"POST /recording-roles", p.withPanelAdmin(p.saveRecordingRoles)},
 		{"POST /ao-roles", p.withPanelAdmin(p.saveAORoles)},
+		{"POST /forum-groups", p.withPanelAdmin(p.saveForumGroups)},
 		{"GET " + settingsPath, p.withAdminPage(p.settingsPage)},
 		{"GET " + metricsPath, p.withAdminPage(p.metricsPage)},
 		{"GET " + joinersPath, p.withJoinersPage(p.joinersPage)},
@@ -448,7 +450,7 @@ func (p *Panel) authCallback(w http.ResponseWriter, r *http.Request) {
 	switch outcome {
 	case checkPassed:
 		sess := session{accessToken: tok.AccessToken, signedIn: panelClock.Now(), discord: p.discordAtSignin(r.Context(), user.Username)}
-		sess.identify(user, p.accessOf(user))
+		sess.identify(user, p.accessOf(r.Context(), user))
 		id, err := p.sessions.add(sess)
 		if err != nil {
 			p.serverError(w, r, nil, "session create", signinURL(causeNone, pending.next), err)
@@ -583,7 +585,7 @@ func (p *Panel) withSession(next func(http.ResponseWriter, *http.Request, sessio
 		user, outcome, err := p.groupCheck(r.Context(), sess.accessToken)
 		switch outcome {
 		case checkPassed:
-			sess.identify(user, p.accessOf(user))
+			sess.identify(user, p.accessOf(r.Context(), user))
 			p.sessions.update(c.Value, sess)
 			next(w, r, sess)
 		case checkUnavailable:

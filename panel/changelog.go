@@ -49,9 +49,10 @@ var rankRoleFields = func() []string {
 
 // shownFields are every field a diff can carry, in the form's order: a
 // hub's fields, then the recording roles and the AO roles, the one field of
-// their sections' diffs, then the rank roles and the Discharged role.
-var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string{fieldRecordingRoles, fieldAORoles}, rankRoleFields,
-	[]string{fieldDischargedRole})
+// their sections' diffs, then the forum groups, the rank roles and the
+// Discharged role.
+var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string{fieldRecordingRoles, fieldAORoles},
+	[]string{fieldFoxholeGroup, fieldJoinersGroups}, rankRoleFields, []string{fieldDischargedRole})
 
 // roleFields are the fields whose values are role IDs, shown by name.
 var roleFields = slices.Concat([]string{fieldModeratorRoles, fieldRecordingRoles, fieldAORoles}, rankRoleFields, []string{fieldDischargedRole})
@@ -73,6 +74,8 @@ var fieldLabels = map[string]string{
 	fieldLockingAllowed:   "locking allowed",
 	fieldRecordingRoles:   "recording roles",
 	fieldAORoles:          "AO roles",
+	fieldFoxholeGroup:     "Foxhole group",
+	fieldJoinersGroups:    "Joiners groups",
 	fieldDischargedRole:   "Discharged role",
 }
 
@@ -167,7 +170,7 @@ type changeView struct {
 // its section holds, and its field already names the set.
 func (c changeView) Label() string {
 	switch c.Action {
-	case store.ChangeModerators, store.ChangeRecordingRoles, store.ChangeAORoles, store.ChangeRankRoles:
+	case store.ChangeModerators, store.ChangeRecordingRoles, store.ChangeAORoles, store.ChangeForumGroups, store.ChangeRankRoles:
 		return string(store.ChangeUpdate)
 	}
 	return string(c.Action)

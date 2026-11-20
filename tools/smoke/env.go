@@ -113,7 +113,8 @@ func missingKeys(vals map[string]string, keys []string) []string {
 // where the forum client's local redirect URI points, the bot's store is the
 // smoke Postgres, and nothing reaches Sentry. The bot's 7Cav API lookups go
 // to the stand-in at cavAPI, when the run has one. In fake mode the panel
-// signs in through the fake forum, whose personas carry these group IDs.
+// signs in through the fake forum, whose personas carry the admin group's
+// ID. The Foxhole group is in the store, which seedPersonaGroups sets.
 func smokeOverrides(forum, dsn, cavAPI string) map[string]string {
 	o := map[string]string{
 		"PANEL_ADDR":     panelAddr,
@@ -132,7 +133,6 @@ func smokeOverrides(forum, dsn, cavAPI string) map[string]string {
 		o["PANEL_OAUTH_TOKEN_URL"] = forumServerURL + "/api/oauth2/token"
 		o["PANEL_OAUTH_USERINFO_URL"] = forumServerURL + "/api/me"
 		o["PANEL_GROUP_IDS"] = strconv.Itoa(adminGroupID)
-		o["FOXHOLE_GROUP_ID"] = strconv.Itoa(foxholeGroupID)
 	}
 	return o
 }

@@ -6,6 +6,7 @@
   {{template "rank-roles" .Settings}}
   {{template "recording-roles" .}}
   {{template "ao-roles" .}}
+  {{template "forum-groups" .}}
 </main>
 {{end}}
 
@@ -126,6 +127,39 @@
   </form>
   <div class="block">
     {{template "changes" .Settings.AORoles.Changes}}
+  </div>
+  </section>
+{{end}}
+
+{{- /* The forum groups the group check reads besides the admin groups.
+     The forum gives the panel group IDs alone, so the fields take IDs. */}}
+{{define "forum-groups"}}
+  <section class="forum-groups" data-section="forum-groups">
+  <form method="post" action="/forum-groups#forum-groups" class="block" data-edit="forum-groups"{{if .Settings.RefusalFor "forum-groups"}} data-posted{{end}}>
+    <h2 class="block-header" id="forum-groups" tabindex="-1"{{if .Settings.RefusalFor "forum-groups"}} aria-describedby="refusal"{{end}}>Forum groups</h2>
+    {{with .Settings.RefusalFor "forum-groups"}}{{template "refusal" .}}{{end}}
+    {{with .Settings.ForumGroups}}
+    {{if .Saved}}{{template "saved"}}{{end}}
+    <input type="hidden" name="version" value="{{.Version}}">
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Foxhole group</span>
+        <input type="text" inputmode="numeric" name="foxhole_group" data-field="foxhole_group" value="{{.FoxholeGroup}}" required aria-describedby="foxhole-group-hint">
+      </label>
+      <span class="field-hint" id="foxhole-group-hint">One forum group ID. Its members are Foxhole managers.</span>
+    </div>
+    <div class="block-row">
+      <label class="field">
+        <span class="field-label">Joiners groups</span>
+        <input type="text" name="joiners_groups" data-field="joiners_groups" value="{{.JoinersGroups}}" aria-describedby="joiners-groups-hint">
+      </label>
+      <span class="field-hint" id="joiners-groups-hint">Forum group IDs, separated by commas or spaces. Their members open the Joiners page. Panel admins always do.</span>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the forum groups</span></button></div>
+    {{end}}
+  </form>
+  <div class="block">
+    {{template "changes" .Settings.ForumGroups.Changes}}
   </div>
   </section>
 {{end}}

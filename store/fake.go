@@ -42,6 +42,8 @@ type Fake struct {
 	recordingRoles map[string]RecordingRoles
 	// aoRoles holds each guild's AO roles and their version.
 	aoRoles map[string]AORoles
+	// forumGroups holds each guild's forum groups and their version.
+	forumGroups map[string]ForumGroups
 	// rankRoles holds each guild's rank roles and their version.
 	rankRoles map[string]RankRoles
 	// changes is the hub page's change log, and foxholeChanges the Foxhole
@@ -83,6 +85,7 @@ func NewFake() *Fake {
 		guildRoles:      make(map[string]GuildModeratorRoles),
 		recordingRoles:  make(map[string]RecordingRoles),
 		aoRoles:         make(map[string]AORoles),
+		forumGroups:     make(map[string]ForumGroups),
 		rankRoles:       make(map[string]RankRoles),
 		changes:         changeLog{nextID: 1},
 		foxholeChanges:  changeLog{nextID: 1},
@@ -442,6 +445,38 @@ func (f *Fake) SaveAORoles(ctx context.Context, guildID string, roles AORoles, e
 	})
 }
 
+// GetForumGroups implements Store.
+func (f *Fake) GetForumGroups(ctx context.Context, guildID string) (ForumGroups, error) {
+	if err := ctx.Err(); err != nil {
+		return ForumGroups{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	groups, ok := f.forumGroups[guildID]
+	if !ok {
+		return ForumGroups{FoxholeGroupID: defaultFoxholeGroupID, JoinersGroupIDs: []int{}}, nil
+	}
+	groups.JoinersGroupIDs = slices.Clone(groups.JoinersGroupIDs)
+	if groups.JoinersGroupIDs == nil {
+		groups.JoinersGroupIDs = []int{}
+	}
+	return groups, nil
+}
+
+// SaveForumGroups implements Store. A guild with no groups stored is at
+// version 0.
+func (f *Fake) SaveForumGroups(ctx context.Context, guildID string, groups ForumGroups, entry ChangeLogEntry) error {
+	return f.writeAllOrNothing(ctx, &entry, func() (int64, error) {
+		current := f.forumGroups[guildID]
+		if current.Version != groups.Version {
+			return 0, ErrStale
+		}
+		f.forumGroups[guildID] = ForumGroups{FoxholeGroupID: groups.FoxholeGroupID,
+			JoinersGroupIDs: slices.Clone(groups.JoinersGroupIDs), Version: current.Version + 1}
+		return 0, nil
+	})
+}
+
 // GetRankRoles implements Store.
 func (f *Fake) GetRankRoles(ctx context.Context, guildID string) (RankRoles, error) {
 	if err := ctx.Err(); err != nil {
@@ -569,6 +604,14 @@ func (f *Fake) ListAORoleChanges(ctx context.Context, limit int) ([]ChangeLogEnt
 		return nil, err
 	}
 	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeAORoles }), nil
+}
+
+// ListForumGroupChanges implements Store.
+func (f *Fake) ListForumGroupChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeForumGroups }), nil
 }
 
 // ListRankRoleChanges implements Store.

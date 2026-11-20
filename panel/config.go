@@ -29,14 +29,6 @@ type Config struct {
 	// forum user is a panel admin when the primary group or any secondary
 	// group is in it. Any forum user can sign in.
 	AdminGroupIDs []int
-	// FoxholeGroupID is the Foxhole group the group check reads: a forum
-	// user is a Foxhole manager when the primary group or any secondary
-	// group is it.
-	FoxholeGroupID int
-	// JoinersGroupIDs are the Joiners groups the group check reads: a forum
-	// user in one, by primary group or any secondary group, opens the
-	// Joiners page. Empty means none.
-	JoinersGroupIDs []int
 }
 
 // Enabled reports whether the panel listens at all.
@@ -46,28 +38,22 @@ func (c Config) Enabled() bool { return c.Addr != "" }
 // forum groups whose members are panel admins when PANEL_GROUP_IDS is unset.
 var defaultGroupIDs = []int{71, 47, 44}
 
-// defaultFoxholeGroupID is the forum's Foxhole group, whose members are
-// Foxhole managers when FOXHOLE_GROUP_ID is unset or empty.
-const defaultFoxholeGroupID = 323
-
-// ConfigFromEnv reads the PANEL_* variables, FOXHOLE_GROUP_ID and
-// JOINERS_GROUP_IDS. With PANEL_ADDR unset it returns a disabled config and
-// no error, whatever the other variables hold. With it set, every other
-// variable but PANEL_GROUP_IDS, FOXHOLE_GROUP_ID and JOINERS_GROUP_IDS is
-// required and the error names the first one
-// missing, so a half-filled .env fails at startup instead of at the first
-// sign-in. A group ID that doesn't parse fails it too.
+// ConfigFromEnv reads the PANEL_* variables. With PANEL_ADDR unset it
+// returns a disabled config and no error, whatever the other variables
+// hold. With it set, every other variable but PANEL_GROUP_IDS is required
+// and the error names the first one missing, so a half-filled .env fails at
+// startup instead of at the first sign-in. A group ID that doesn't parse
+// fails it too.
 func ConfigFromEnv() (Config, error) {
 	cfg := Config{
-		Addr:           os.Getenv("PANEL_ADDR"),
-		BaseURL:        strings.TrimRight(os.Getenv("PANEL_BASE_URL"), "/"),
-		ClientID:       os.Getenv("PANEL_OAUTH_CLIENT_ID"),
-		ClientSecret:   os.Getenv("PANEL_OAUTH_CLIENT_SECRET"),
-		AuthorizeURL:   os.Getenv("PANEL_OAUTH_AUTHORIZE_URL"),
-		TokenURL:       os.Getenv("PANEL_OAUTH_TOKEN_URL"),
-		UserinfoURL:    os.Getenv("PANEL_OAUTH_USERINFO_URL"),
-		AdminGroupIDs:  defaultGroupIDs,
-		FoxholeGroupID: defaultFoxholeGroupID,
+		Addr:          os.Getenv("PANEL_ADDR"),
+		BaseURL:       strings.TrimRight(os.Getenv("PANEL_BASE_URL"), "/"),
+		ClientID:      os.Getenv("PANEL_OAUTH_CLIENT_ID"),
+		ClientSecret:  os.Getenv("PANEL_OAUTH_CLIENT_SECRET"),
+		AuthorizeURL:  os.Getenv("PANEL_OAUTH_AUTHORIZE_URL"),
+		TokenURL:      os.Getenv("PANEL_OAUTH_TOKEN_URL"),
+		UserinfoURL:   os.Getenv("PANEL_OAUTH_USERINFO_URL"),
+		AdminGroupIDs: defaultGroupIDs,
 	}
 	if !cfg.Enabled() {
 		return cfg, nil
@@ -94,20 +80,6 @@ func ConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("PANEL_GROUP_IDS: %w", err)
 		}
 		cfg.AdminGroupIDs = ids
-	}
-	if raw := strings.TrimSpace(os.Getenv("FOXHOLE_GROUP_ID")); raw != "" {
-		id, err := strconv.Atoi(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("FOXHOLE_GROUP_ID: %q is not a group ID", raw)
-		}
-		cfg.FoxholeGroupID = id
-	}
-	if raw := strings.TrimSpace(os.Getenv("JOINERS_GROUP_IDS")); raw != "" {
-		ids, err := parseGroupIDs(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("JOINERS_GROUP_IDS: %w", err)
-		}
-		cfg.JoinersGroupIDs = ids
 	}
 	return cfg, nil
 }

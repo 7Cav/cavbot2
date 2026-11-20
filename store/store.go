@@ -34,8 +34,8 @@ var ErrNotFound = errors.New("store: not found")
 // ErrStale is returned by a combined write whose record is not as the
 // caller read it (#373): SaveHub of a hub whose row is at another version,
 // or of a new hub on a channel a hub already stands on,
-// SaveGuildModeratorRoles, SaveRecordingRoles, SaveAORoles or SaveRankRoles
-// of a set whose row is at another version, and SaveFoxholeNote over a note that isn't the one the
+// SaveGuildModeratorRoles, SaveRecordingRoles, SaveAORoles, SaveForumGroups or
+// SaveRankRoles of a set whose row is at another version, and SaveFoxholeNote over a note that isn't the one the
 // saver loaded. The write lands neither the settings nor the entry. Compare
 // with errors.Is.
 var ErrStale = errors.New("store: the record changed since it was read")
@@ -127,6 +127,23 @@ type AORoles struct {
 	// RecordingRoles.Version does. A guild with no row is at version 0.
 	Version int64
 }
+
+// ForumGroups is a guild's Foxhole group and Joiners groups (GLOSSARY.md),
+// the forum groups the panel's group check reads besides its admin groups,
+// with the version of the row that holds them.
+type ForumGroups struct {
+	FoxholeGroupID int
+	// JoinersGroupIDs is a set in no promised order. nil and empty are one
+	// thing.
+	JoinersGroupIDs []int
+	// Version counts the saves that took effect, as RecordingRoles.Version
+	// does. A guild with no row is at version 0.
+	Version int64
+}
+
+// defaultFoxholeGroupID is the forum's Foxhole group, which a guild with no
+// forum groups saved reads back.
+const defaultFoxholeGroupID = 323
 
 // RankRoles is a guild's rank roles (GLOSSARY.md, Rank role): the role that
 // counts as each rank on the rank ladder, saved for the whole ladder at
@@ -295,6 +312,8 @@ const (
 	ChangeRecordingRoles ChangeAction = "recording_roles"
 	// ChangeAORoles is a save of the AO roles.
 	ChangeAORoles ChangeAction = "ao_roles"
+	// ChangeForumGroups is a save of the forum groups.
+	ChangeForumGroups ChangeAction = "forum_groups"
 	// ChangeRankRoles is a save of the rank roles.
 	ChangeRankRoles ChangeAction = "rank_roles"
 	// ChangeNote is a save of one member's note on the Foxhole page. Its
@@ -433,7 +452,7 @@ type MemberNames struct {
 // it.
 //
 // A panel save is one call: SaveHub, RemoveHub, SaveGuildModeratorRoles,
-// SaveRecordingRoles, SaveAORoles or SaveRankRoles writes the save's settings and its
+// SaveRecordingRoles, SaveAORoles, SaveForumGroups or SaveRankRoles writes the save's settings and its
 // change log entry in one transaction, so both land or neither does, and no method writes either
 // alone (#362).
 // The transaction never leaves the store. The pool holds two connections,
@@ -538,6 +557,18 @@ type Store interface {
 	// with action ChangeAORoles that reference no hub, newest first in
 	// append order.
 	ListAORoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
+
+	// GetForumGroups returns the forum groups with their version. A guild
+	// with no row reads back as the Foxhole group 323 and no Joiners groups
+	// at version 0, with no error.
+	GetForumGroups(ctx context.Context, guildID string) (ForumGroups, error)
+	// SaveForumGroups replaces the forum groups with groups and appends the
+	// save's change log entry together, under SaveRecordingRoles' rules.
+	SaveForumGroups(ctx context.Context, guildID string, groups ForumGroups, entry ChangeLogEntry) error
+	// ListForumGroupChanges returns at most limit forum groups saves, the
+	// entries with action ChangeForumGroups that reference no hub, newest
+	// first in append order.
+	ListForumGroupChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
 	// GetRankRoles returns the rank roles with their version. A guild with
 	// no row reads back as no roles at version 0, with no error.

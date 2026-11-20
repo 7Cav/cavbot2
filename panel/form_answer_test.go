@@ -351,6 +351,14 @@ var formAnswers = []formAnswer{
 			assertRedirect(t, res, settingsPath)
 			return stale.send(w.b, func(v url.Values) { v.Set(fieldAORoles, "role-hq") })
 		}},
+	{name: "a stale save of the forum groups", route: "POST /forum-groups", status: http.StatusConflict, shown: http.StatusOK,
+		send: func(t *testing.T, w *testWorld) (string, *http.Response) {
+			stale := formOn(t, w.b, settingsPath, "/forum-groups", "")
+			other := secondBrowser(t, w)
+			_, res := formOn(t, other, settingsPath, "/forum-groups", "").send(other, func(v url.Values) { v.Set(fieldFoxholeGroup, "400") })
+			assertRedirect(t, res, settingsPath)
+			return stale.send(w.b, func(v url.Values) { v.Set(fieldFoxholeGroup, "401") })
+		}},
 	{name: "a stale save of the rank roles", route: "POST /rank-roles", status: http.StatusConflict, shown: http.StatusOK,
 		send: func(t *testing.T, w *testWorld) (string, *http.Response) {
 			stale := formOn(t, w.b, settingsPath, "/rank-roles", "")

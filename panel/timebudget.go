@@ -167,6 +167,18 @@ func (s pageStore) ListAORoleChanges(ctx context.Context, limit int) ([]store.Ch
 	})
 }
 
+func (s pageStore) GetForumGroups(ctx context.Context, guildID string) (store.ForumGroups, error) {
+	return timeStoreRead(s.reads, forumGroupsRead, func() (store.ForumGroups, error) {
+		return s.Store.GetForumGroups(ctx, guildID)
+	})
+}
+
+func (s pageStore) ListForumGroupChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	return timeStoreRead(s.reads, forumGroupChangesRead, func() ([]store.ChangeLogEntry, error) {
+		return s.Store.ListForumGroupChanges(ctx, limit)
+	})
+}
+
 func (s pageStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
 	return timeStoreRead(s.reads, changeLogRead, func() ([]store.ChangeLogEntry, error) {
 		return s.Store.ListChangeLog(ctx, hubID, limit)

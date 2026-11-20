@@ -1508,8 +1508,13 @@ func TestCallWithADoneContextFailsAndChangesNothing(t *testing.T) {
 			"SaveAORoles": func() error {
 				return s.SaveAORoles(done, "guild-1", AORoles{RoleIDs: []string{"role-sc"}}, aoRolesEntry(7))
 			},
-			"ListAORoleChanges":  func() error { _, err := s.ListAORoleChanges(done, 10); return err },
-			"ListFoxholeRecords": func() error { _, err := s.ListFoxholeRecords(done, "guild-1"); return err },
+			"ListAORoleChanges": func() error { _, err := s.ListAORoleChanges(done, 10); return err },
+			"GetForumGroups":    func() error { _, err := s.GetForumGroups(done, "guild-1"); return err },
+			"SaveForumGroups": func() error {
+				return s.SaveForumGroups(done, "guild-1", ForumGroups{FoxholeGroupID: 400}, forumGroupsEntry(8))
+			},
+			"ListForumGroupChanges": func() error { _, err := s.ListForumGroupChanges(done, 10); return err },
+			"ListFoxholeRecords":    func() error { _, err := s.ListFoxholeRecords(done, "guild-1"); return err },
 			"SaveFoxholeNote": func() error {
 				return s.SaveFoxholeNote(done, "guild-1", NoteSave{MemberID: memberDoe, Before: "discharged 12 Sep", Note: "rejoined"}, noteEntry("rejoined"))
 			},

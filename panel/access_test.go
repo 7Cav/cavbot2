@@ -15,8 +15,7 @@ import (
 	"golang.org/x/net/html"
 )
 
-// testJoinersGroupID is the Joiners group the test panel is configured
-// with.
+// testJoinersGroupID is the Joiners group seedForumGroups saves.
 const testJoinersGroupID = 410
 
 // addJoinersViewer makes the forum know a user in the Joiners group alone.
@@ -113,8 +112,8 @@ func TestSignedInVisitorCanGoBackToTheForum(t *testing.T) {
 
 // settingsSaveCases is a case for each save the hub page and the Settings
 // page post: a hub's create, register, update and remove, the guild-wide
-// moderator roles, the recording roles, the AO roles and the rank roles.
-// Each reads the path it posts to and its form off a store that holds
+// moderator roles, the recording roles, the AO roles, the forum groups and
+// the rank roles. Each reads the path it posts to and its form off a store that holds
 // testHub.
 var settingsSaveCases = []struct {
 	name string
@@ -161,6 +160,11 @@ var settingsSaveCases = []struct {
 		form: func(t *testing.T, st store.Store) url.Values { return aoRolesForm(t, st, "role-hq") },
 	},
 	{
+		name: "forum groups",
+		path: func(*testing.T, store.Store) string { return "/forum-groups" },
+		form: func(t *testing.T, st store.Store) url.Values { return forumGroupsForm(t, st, "400", "") },
+	},
+	{
 		name: "rank roles",
 		path: func(*testing.T, store.Store) string { return "/rank-roles" },
 		form: func(t *testing.T, st store.Store) url.Values {
@@ -191,6 +195,7 @@ func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 		for _, tc := range settingsSaveCases {
 			t.Run(u.name+"/"+tc.name, func(t *testing.T) {
 				w := newTestWorld(t, testHub())
+				seedForumGroups(t, w.st)
 				signInAs(t, w.forum, w.b, u.add(w.forum))
 				path, form := tc.path(t, w.st), tc.form(t, w.st)
 				before := readSavedState(t, w.st)

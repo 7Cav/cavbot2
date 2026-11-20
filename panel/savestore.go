@@ -148,6 +148,24 @@ func (b boundedStore) ListAORoleChanges(ctx context.Context, limit int) ([]store
 	return b.store.ListAORoleChanges(ctx, limit)
 }
 
+func (b boundedStore) GetForumGroups(ctx context.Context, guildID string) (store.ForumGroups, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.GetForumGroups(ctx, guildID)
+}
+
+func (b boundedStore) SaveForumGroups(ctx context.Context, guildID string, groups store.ForumGroups, entry store.ChangeLogEntry) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.SaveForumGroups(ctx, guildID, groups, entry)
+}
+
+func (b boundedStore) ListForumGroupChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ListForumGroupChanges(ctx, limit)
+}
+
 func (b boundedStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()

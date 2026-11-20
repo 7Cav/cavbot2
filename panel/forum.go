@@ -3,10 +3,13 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"slices"
+
+	"github.com/7cav/cavbot2/utils"
 )
 
 // forumUser is the part of the forum's /api/me answer the panel reads. The
@@ -53,7 +56,7 @@ func (o checkOutcome) cause() cause {
 // groupCheck is one GET to the userinfo URL with the access token. It returns
 // the user on checkPassed and the outcome in every case; err carries the
 // transport or read failure behind checkUnavailable for the log line. What
-// the user opens is p.accessOf(user), decided by the caller.
+// the user opens is p.accessOf(ctx, user), decided by the caller.
 func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, checkOutcome, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.cfg.UserinfoURL, nil)
 	if err != nil {
@@ -146,13 +149,26 @@ func (a access) landingLabel() string {
 }
 
 // accessOf is the group check's rule: the user's primary group or any
-// secondary group decides what the session opens.
-func (p *Panel) accessOf(u forumUser) access {
-	return access{
-		panelAdmin:     inGroups(u, p.cfg.AdminGroupIDs...),
-		foxholeManager: inGroups(u, p.cfg.FoxholeGroupID),
-		joinersViewer:  inGroups(u, p.cfg.JoinersGroupIDs...),
+// secondary group decides what the session opens. It reads the forum groups
+// from the store each time, so a save of them counts from the next request.
+// A failed read is reported and opens neither the Foxhole page nor the
+// Joiners page for this request.
+func (p *Panel) accessOf(ctx context.Context, u forumUser) access {
+	a := access{panelAdmin: inGroups(u, p.cfg.AdminGroupIDs...)}
+	ctx, cancel := panelClock.WithTimeout(ctx, storeTimeout)
+	defer cancel()
+	groups, err := p.hubs.deps.Store.GetForumGroups(ctx, p.hubs.deps.GuildID)
+	if errors.Is(err, context.Canceled) {
+		utils.Info("Panel page abandoned", "step", "forum groups read", "username", u.Username, "forum_user_id", u.UserID)
+		return a
 	}
+	if err != nil {
+		utils.CaptureError("Panel forum groups read failed", err, "username", u.Username, "forum_user_id", u.UserID)
+		return a
+	}
+	a.foxholeManager = inGroups(u, groups.FoxholeGroupID)
+	a.joinersViewer = inGroups(u, groups.JoinersGroupIDs...)
+	return a
 }
 
 // inGroups reports whether the user's primary group or any secondary group

@@ -497,6 +497,9 @@ func (s *supervisor) start(ctx context.Context) (<-chan struct{}, error) {
 	s.st.Version, s.st.BotBinary = version, s.paths.binary()
 
 	if s.opts.forum == forumFake {
+		if err := seedPersonaGroups(ctx, dsn, effective("GUILD_ID")); err != nil {
+			return nil, fmt.Errorf("seed the personas' forum groups: %w", err)
+		}
 		ln, err := net.Listen("tcp", forumAddr)
 		if err != nil {
 			return nil, fmt.Errorf("fake forum: %w", err)
