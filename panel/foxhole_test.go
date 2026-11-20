@@ -127,8 +127,9 @@ func railLinks(t *testing.T, doc *html.Node) map[string]string {
 }
 
 // The rail shows the Hubs link to panel admins alone, the Foxhole link to
-// panel admins and Foxhole managers, and the Recordings link to everyone,
-// and every link it shows, the mark included, lands on the page it names.
+// panel admins and Foxhole managers, the Joiners link to panel admins and
+// Joiners viewers, and the Recordings link to everyone, and every link it
+// shows, the mark included, lands on the page it names.
 // The panel admin row's Hubs link is a regression pin: panel admins keep the
 // hub page as it was. The row in both groups catches a root that sends
 // every Foxhole manager to the Foxhole page, panel admins among them.
@@ -140,12 +141,14 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 		hubs       bool
 		foxhole    bool
 		recordings bool
+		joiners    bool
 		landing    string
 	}{
-		{"panel admin", 2, []int{47}, true, true, true, "hubs"},
-		{"Foxhole manager", 2, []int{testFoxholeGroupID}, false, true, true, "foxhole"},
-		{"panel admin and Foxhole manager", 2, []int{47, testFoxholeGroupID}, true, true, true, "hubs"},
-		{"outsider", 2, []int{35}, false, false, true, "recordings"},
+		{"panel admin", 2, []int{47}, true, true, true, true, "hubs"},
+		{"Foxhole manager", 2, []int{testFoxholeGroupID}, false, true, true, false, "foxhole"},
+		{"panel admin and Foxhole manager", 2, []int{47, testFoxholeGroupID}, true, true, true, true, "hubs"},
+		{"Joiners viewer", 2, []int{testJoinersGroupID}, false, false, true, true, "joiners"},
+		{"outsider", 2, []int{35}, false, false, true, false, "recordings"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,6 +165,9 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 			}
 			if _, ok := links["recordings"]; ok != tc.recordings {
 				t.Errorf("the rail shows the Recordings link: %v, want %v", ok, tc.recordings)
+			}
+			if _, ok := links["joiners"]; ok != tc.joiners {
+				t.Errorf("the rail shows the Joiners link: %v, want %v", ok, tc.joiners)
 			}
 			for page, href := range links {
 				want := page

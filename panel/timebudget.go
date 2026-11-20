@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/7cav/cavbot2/store"
@@ -48,6 +49,22 @@ func timeStoreRead[T any](r *pageReads, name string, read func() (T, error)) (T,
 	v, err := read()
 	r.add(name, started)
 	return v, err
+}
+
+// storeReads runs a page's store reads in turn, each recorded in reads,
+// and skips the rest once one fails. err is the first failure, named.
+type storeReads struct {
+	reads *pageReads
+	err   error
+}
+
+func (s *storeReads) read(name string, f func() error) {
+	if s.err != nil {
+		return
+	}
+	if _, err := timeStoreRead(s.reads, name, func() (struct{}, error) { return struct{}{}, f() }); err != nil {
+		s.err = fmt.Errorf("%s: %w", name, err)
+	}
 }
 
 // budgetReport is the record as the Sentry event carries it, under

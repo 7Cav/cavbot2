@@ -12,7 +12,8 @@
 // and report, and keeps its own change log of saves and reports. The
 // Settings page is the rank roles and the recording roles, each with its
 // change log. The Metrics page shows panel admins the server's Discord
-// activity in group totals.
+// activity in group totals. The Joiners page lists each week's new members
+// by AO role.
 package panel
 
 import (
@@ -208,6 +209,7 @@ func (p *Panel) routes() []route {
 		{"POST /ao-roles", p.withPanelAdmin(p.saveAORoles)},
 		{"GET " + settingsPath, p.withAdminPage(p.settingsPage)},
 		{"GET " + metricsPath, p.withAdminPage(p.metricsPage)},
+		{"GET " + joinersPath, p.withJoinersPage(p.joinersPage)},
 		{"POST /rank-roles", p.withPanelAdmin(p.saveRankRoles)},
 		{"GET " + recordingsPath, p.withSession(p.recordingsPage)},
 		{"GET " + recordingsPath + "/{id}", p.withSession(p.recordingPage)},
@@ -602,13 +604,23 @@ func (p *Panel) withPanelAdmin(next func(http.ResponseWriter, *http.Request, ses
 
 // withAdminPage is the gate a page for panel admins alone sits behind: the
 // Settings page and the Metrics page. This request's group check
-// must find a panel admin. Anyone else gets the no-access page at the
-// page's address, a page load included, where the hub page sends them on
-// to the page they land on.
+// must find a panel admin. Anyone else gets refusePage's answer.
 func (p *Panel) withAdminPage(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
-	return p.withAccess(func(a access) bool { return a.panelAdmin }, func(w http.ResponseWriter, r *http.Request, sess session) {
-		p.noAccess(w, r, sess, noAccessRefused, r.URL.Path)
-	}, next)
+	return p.withAccess(func(a access) bool { return a.panelAdmin }, p.refusePage, next)
+}
+
+// withJoinersPage is the gate the Joiners page sits behind: this request's
+// group check must find a panel admin or a Joiners viewer. Anyone else gets
+// refusePage's answer.
+func (p *Panel) withJoinersPage(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
+	return p.withAccess(access.joinersPage, p.refusePage, next)
+}
+
+// refusePage answers a page load the session's groups don't open with the
+// no-access page at the page's address, where the hub page sends them on
+// to the page they land on.
+func (p *Panel) refusePage(w http.ResponseWriter, r *http.Request, sess session) {
+	p.noAccess(w, r, sess, noAccessRefused, r.URL.Path)
 }
 
 // withFoxholePage is the gate the Foxhole page sits behind: this request's

@@ -52,10 +52,10 @@ func TestPanelAdminOpensTheSettingsPageFromTheRail(t *testing.T) {
 	}
 }
 
-// A Foxhole manager and an outsider find no link to the Settings page or
-// the Metrics page in the rail of the page they land on, and each page's
-// address answers them with the no-access page.
-func TestAdminPagesAreForPanelAdminsAlone(t *testing.T) {
+// A Foxhole manager and an outsider find no link to the Settings page, the
+// Metrics page or the Joiners page in the rail of the page they land on,
+// and each page's address answers them with the no-access page.
+func TestPagesTheirGroupsDontOpenAnswerWithTheNoAccessPage(t *testing.T) {
 	visitors := []struct {
 		name string
 		add  func(f *fakeForum) *forumAccount
@@ -63,7 +63,7 @@ func TestAdminPagesAreForPanelAdminsAlone(t *testing.T) {
 		{"Foxhole manager", addFoxholeManager},
 		{"outsider", addOutsider},
 	}
-	pages := []struct{ page, path string }{{pageSettings, settingsPath}, {pageMetrics, metricsPath}}
+	pages := []struct{ page, path string }{{pageSettings, settingsPath}, {pageMetrics, metricsPath}, {pageJoiners, joinersPath}}
 	for _, v := range visitors {
 		for _, pg := range pages {
 			t.Run(v.name+"/"+pg.page, func(t *testing.T) {

@@ -110,6 +110,8 @@ type pageData struct {
 	Recordings recordingsView
 	// Metrics is filled for the Metrics page alone.
 	Metrics metricsView
+	// Joiners is filled for the Joiners page alone.
+	Joiners joinersView
 	Failure failure
 	// Message is the one sentence of the error page, and of the no-access
 	// page.
@@ -141,6 +143,7 @@ type railPages struct {
 	Foxhole    bool
 	Recordings bool
 	Metrics    bool
+	Joiners    bool
 	Settings   bool
 }
 
@@ -150,6 +153,7 @@ const (
 	pageFoxhole    = "foxhole"
 	pageRecordings = "recordings"
 	pageMetrics    = "metrics"
+	pageJoiners    = "joiners"
 	pageSettings   = "settings"
 )
 
@@ -159,7 +163,7 @@ type pages map[string]*template.Template
 
 func parsePages() (pages, error) {
 	out := pages{}
-	for _, name := range []string{"signin", "home", "error", "noaccess", "foxhole", "recordings", "metrics", "settings"} {
+	for _, name := range []string{"signin", "home", "error", "noaccess", "foxhole", "recordings", "metrics", "joiners", "settings"} {
 		t, err := template.New("layout.html").ParseFS(templateFS, "templates/layout.html", "templates/parts.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
