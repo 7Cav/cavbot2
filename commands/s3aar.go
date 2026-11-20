@@ -384,11 +384,7 @@ func runS3aar(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	username, discordID := interactionUsernameAndID(i)
 	utils.Info("🚀 Starting S3 AAR", "command", "S3AAR", "username", username, "discord_id", discordID)
 
-	options := i.ApplicationCommandData().Options
-	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))
-	for _, opt := range options {
-		optionMap[opt.Name] = opt
-	}
+	optionMap := optionsByName(i)
 
 	if err := deferPublic(r, i); err != nil {
 		replyAckFailed(r, i, err)

@@ -64,11 +64,7 @@ func runZulu(r utils.InteractionResponder, now time.Time, i *discordgo.Interacti
 	username, discordID := interactionUsernameAndID(i)
 	utils.Info("🚀 Starting Zulu time lookup", "command", "Zulu", "username", username, "discord_id", discordID)
 
-	options := i.ApplicationCommandData().Options
-	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))
-	for _, opt := range options {
-		optionMap[opt.Name] = opt
-	}
+	optionMap := optionsByName(i)
 
 	var timeStr, dateStr string
 	if opt, ok := optionMap["time"]; ok {

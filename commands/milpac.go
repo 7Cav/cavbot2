@@ -67,11 +67,7 @@ func runMilpac(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	options := i.ApplicationCommandData().Options
-	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))
-	for _, opt := range options {
-		optionMap[opt.Name] = opt
-	}
+	optionMap := optionsByName(i)
 
 	// UserValue(nil) resolves the option to a *User carrying just the ID — which
 	// is all this command consumes. Passing nil avoids needing a live session.

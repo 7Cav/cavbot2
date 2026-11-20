@@ -141,11 +141,7 @@ func handleHelplineCommand(s *discordgo.Session, i *discordgo.InteractionCreate)
 func runHelpline(r utils.InteractionResponder, i *discordgo.InteractionCreate) {
 	username, discordID := interactionUsernameAndID(i)
 
-	options := i.ApplicationCommandData().Options
-	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))
-	for _, opt := range options {
-		optionMap[opt.Name] = opt
-	}
+	optionMap := optionsByName(i)
 
 	// The mention has to live in the message content: a mention rendered inside
 	// an embed displays as a chip but never notifies.
