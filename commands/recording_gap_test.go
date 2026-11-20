@@ -475,6 +475,41 @@ func TestRecordingCutShortRecorderStartingElsewhereKeepsItsWayIn(t *testing.T) {
 	})
 }
 
+// A recorder a cut short freed can start again in the same channel before
+// the cut short's leave gives up. That leave leaves the recorder's way in
+// to the new recording, and the new recording's stop puts back the
+// overwrite that kept the recorder out.
+func TestRecordingCutShortRecorderStartingInTheSameChannelKeepsItsWayIn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sc := newBubbleRecordScene(t, testRecorder)
+		recorder := permMember{id: testRecorder}
+		before := append(permCategoryOverwrites(),
+			&discordgo.PermissionOverwrite{ID: testRecorder, Type: discordgo.PermissionOverwriteTypeMember, Allow: discordgo.PermissionVoiceSpeak, Deny: discordgo.PermissionVoiceConnect})
+		sc.fake.channels[recordChannel].PermissionOverwrites = before
+		sc.startIn(t, recStarter, recordChannel)
+		sc.voice.setLeaveTakes(hungLeave)
+		t.Cleanup(func() { time.Sleep(hungLeave) })
+		sc.listener(t, recordChannel).GapStarted(time.Now(), voice.GapVoiceGatewayClosed)
+		time.Sleep(gapCutsShortAfter)
+		synctest.Wait()
+
+		// startIn would count the cut short's hung connection too.
+		sc.fake.setVoice(recHolder.id, recordChannel)
+		if reply := recordAs(t, sc.rt, recHolder, "start"); !strings.HasPrefix(reply, "✅") {
+			t.Fatalf("second start reply = %q, want a ✅ verdict", reply)
+		}
+
+		if !canJoin(t, sc.fake.overwritesOf(t, recordChannel), recorder) {
+			t.Errorf("recorder can't join %s while recording it again, want it let in", recordChannel)
+		}
+		sc.voice.setLeaveTakes(0)
+		recordAs(t, sc.rt, recHolder, "stop")
+		if got := sc.fake.overwritesOf(t, recordChannel); !sameOverwrites(got, before) {
+			t.Errorf("overwrites after the second stop = %v, want them as before the first start, %v", got, before)
+		}
+	})
+}
+
 // pingsIn is every message still up in a channel's chat that would ping
 // someone.
 func pingsIn(fake *fakeTempVCManager, channelID string) []fakeMessage {
