@@ -94,11 +94,6 @@ func (s *hubService) forumGroupsSection(ctx context.Context, guild guildInfo, re
 // nothing. It returns the groups as stored, at the version the save left
 // them at.
 func (s *hubService) setForumGroups(ctx context.Context, in forumGroupsInput, by actor) (store.ForumGroups, error) {
-	unlock, err := s.lockSave(ctx)
-	if err != nil {
-		return store.ForumGroups{}, err
-	}
-	defer unlock()
 	before, err := s.deps.Store.GetForumGroups(ctx, s.deps.GuildID)
 	if err != nil {
 		return store.ForumGroups{}, fmt.Errorf("%s: %w", forumGroupsRead, err)
@@ -106,8 +101,8 @@ func (s *hubService) setForumGroups(ctx context.Context, in forumGroupsInput, by
 	if !formIsCurrent(in.Version, before.Version) {
 		return store.ForumGroups{}, errStaleForumGroups
 	}
-	foxhole, err := strconv.Atoi(strings.TrimSpace(in.FoxholeGroup))
-	if err != nil || foxhole < 1 {
+	foxhole, ok := parseGroupID(strings.TrimSpace(in.FoxholeGroup))
+	if !ok {
 		return store.ForumGroups{}, errFoxholeGroupID
 	}
 	joiners, ok := parseGroupIDList(in.JoinersGroups)
@@ -142,18 +137,25 @@ func (s *hubService) setForumGroups(ctx context.Context, in forumGroupsInput, by
 }
 
 // parseGroupIDList reads forum group IDs separated by commas or spaces as a
-// sorted set, never nil. ok is false when one is not a whole number above 0.
+// sorted set, never nil. ok is false when one is not a forum group ID.
 func parseGroupIDList(raw string) (ids []int, ok bool) {
 	ids = []int{}
 	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
-		id, err := strconv.Atoi(part)
-		if err != nil || id < 1 {
+		id, ok := parseGroupID(part)
+		if !ok {
 			return nil, false
 		}
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
 	return slices.Compact(ids), true
+}
+
+// parseGroupID reads one forum group ID: a whole number above 0 that fits
+// the store's INTEGER column.
+func parseGroupID(s string) (int, bool) {
+	id, err := strconv.ParseInt(s, 10, 32)
+	return int(id), err == nil && id > 0
 }
 
 // sortedGroupIDs is a set of group IDs as a diff records it: sorted, and

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/7cav/cavbot2/commands"
 	"github.com/7cav/cavbot2/store"
 )
 
@@ -45,14 +46,16 @@ func seedForumGroups(t *testing.T, st store.Store) {
 // page from the next request on. A Foxhole manager signed in under the old
 // Foxhole group loses the Foxhole page with no new sign-in, a user in the
 // new one lands on it, and a user in a new Joiners group lands on the
-// Joiners page.
+// Joiners page. The save writes only the store, so it needs no guild data.
 func TestForumGroupsSaveCountsFromTheNextRequest(t *testing.T) {
 	w := newTestWorld(t)
 	signIn(t, w.forum, w.b)
 	former := newBrowser(t, w.p)
 	signInAs(t, w.forum, former, addFoxholeManager(w.forum))
 
+	w.discord.setGuild(commands.GuildDataAbsent)
 	assertRedirect(t, w.b.postForm("/forum-groups", forumGroupsForm(t, w.st, "400", "410 411")), settingsPath)
+	w.discord.setGuild(commands.GuildDataPresent)
 
 	assertRecordingsPage(t, follow(t, former, former.get(foxholePath)))
 	landings := []struct {
@@ -84,6 +87,7 @@ func TestForumGroupsSaveRefusalsWriteNothing(t *testing.T) {
 		{"a Foxhole group of 0", "0", "", fieldFoxholeGroup},
 		{"a Joiners group that is not a number", "323", "410, joiners", fieldJoinersGroups},
 		{"a Joiners group below 0", "323", "-410", fieldJoinersGroups},
+		{"a Joiners group past the store's INTEGER range", "323", "2147483648", fieldJoinersGroups},
 		{"the groups as stored", " 323 ", " ", refusalUnchanged},
 	}
 	for _, tc := range cases {

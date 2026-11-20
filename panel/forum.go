@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -157,6 +158,10 @@ func (p *Panel) accessOf(ctx context.Context, u forumUser) access {
 	ctx, cancel := panelClock.WithTimeout(ctx, storeTimeout)
 	defer cancel()
 	groups, err := p.hubs.deps.Store.GetForumGroups(ctx, p.hubs.deps.GuildID)
+	if errors.Is(err, context.Canceled) {
+		utils.Info("Panel page abandoned", "step", "forum groups read", "username", u.Username, "forum_user_id", u.UserID)
+		return a
+	}
 	if err != nil {
 		utils.CaptureError("Panel forum groups read failed", err, "username", u.Username, "forum_user_id", u.UserID)
 		return a

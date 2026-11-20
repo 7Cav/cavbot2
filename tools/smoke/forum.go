@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/7cav/cavbot2/store"
+	"github.com/7cav/cavbot2/utils"
 )
 
 // The forum groups the personas belong to. adminGroupID and foxholeGroupID
@@ -60,6 +61,7 @@ var personas = []persona{
 // seedPersonaGroups opens the bot's store at dsn, migrating it as the bot
 // does at startup, and seeds the personas' forum groups.
 func seedPersonaGroups(ctx context.Context, dsn, guildID string) error {
+	utils.InitLogger("WARN")
 	st, err := store.Open(ctx, dsn)
 	if err != nil {
 		return err
