@@ -525,14 +525,15 @@ func infractions(t *testing.T, st warnStore) string {
 }
 
 // addWarnings saves n warnings of warnTarget, oldest first, each with a
-// notice but the first, and returns them.
+// notice but the first, and returns them. Each reason ends in "[i]", so no
+// reason is part of another.
 func addWarnings(t *testing.T, st *store.Fake, n int, reason string) []store.Warning {
 	t.Helper()
 	var out []store.Warning
 	for i := range n {
 		w, err := st.AddWarning(context.Background(), store.Warning{
 			GuildID: warnGuild, MemberID: warnTarget, ModeratorID: warnModerator, ChannelID: warnChannel,
-			Reason: fmt.Sprintf("%s %d", reason, i),
+			Reason: fmt.Sprintf("%s [%d]", reason, i),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -559,38 +560,40 @@ func TestInfractionsListsWarningsNewestFirstWithLinks(t *testing.T) {
 	reply := infractions(t, st)
 
 	wantReply(t, reply, "⚠️", warnTarget, "2 warnings")
-	lines := strings.Split(reply, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("reply = %q, want a header and two lines", reply)
+	newest, oldest := strings.Index(reply, added[1].Reason), strings.Index(reply, added[0].Reason)
+	if newest < 0 || oldest < 0 || newest > oldest {
+		t.Errorf("reply = %q, want both warnings, newest first", reply)
 	}
-	newest, oldest := lines[1], lines[2]
+	if !strings.Contains(reply, mention(warnModerator)) {
+		t.Errorf("reply = %q, want it to name the moderator", reply)
+	}
 	link := "https://discord.com/channels/" + warnGuild + "/" + warnChannel + "/" + added[1].MessageID
-	if !strings.Contains(newest, added[1].Reason) || !strings.Contains(newest, link) || !strings.Contains(newest, mention(warnModerator)) {
-		t.Errorf("first line = %q, want the newest warning, its moderator and its notice's link", newest)
-	}
-	if !strings.Contains(oldest, added[0].Reason) || strings.Contains(oldest, "https://") {
-		t.Errorf("second line = %q, want the oldest warning, with no link since it has no notice", oldest)
+	if !strings.Contains(reply, link) || strings.Count(reply, "https://discord.com/channels/") != 1 {
+		t.Errorf("reply = %q, want a link to the newest warning's notice and none for the one with no notice", reply)
 	}
 }
 
 func TestInfractionsThatOverflowEndWithACountOfTheRest(t *testing.T) {
 	st := store.NewFake()
 	const n = 20
-	addWarnings(t, st, n, strings.Repeat("x", warnReasonLimit-3))
+	added := addWarnings(t, st, n, strings.Repeat("x", warnReasonLimit-6))
 
 	reply := infractions(t, st)
 
 	if got := len(reply); got > discordMessageLimit {
 		t.Fatalf("reply is %d characters, over Discord's %d", got, discordMessageLimit)
 	}
-	lines := strings.Split(reply, "\n")
-	listed := len(lines) - 2
-	tail := lines[len(lines)-1]
-	if listed < 1 || !strings.Contains(tail, fmt.Sprintf("%d %ss", n-listed, olderWarningsPhrase)) {
-		t.Errorf("reply = %q, want as many lines as fit and a count of the %d left", reply, n-listed)
+	listed := 0
+	for _, w := range added {
+		if strings.Contains(reply, w.Reason) {
+			listed++
+		}
 	}
-	if !strings.Contains(lines[1], fmt.Sprintf(" %d · ", n-1)) {
-		t.Errorf("first line = %q, want the newest warning", lines[1])
+	if listed < 1 || !strings.Contains(reply, added[n-1].Reason) {
+		t.Errorf("reply = %q, want the newest warning listed", reply)
+	}
+	if !strings.Contains(reply, countWarnings(n-listed, olderWarningsPhrase)) {
+		t.Errorf("reply = %q, want a count of the %d warnings it doesn't list", reply, n-listed)
 	}
 }
 
