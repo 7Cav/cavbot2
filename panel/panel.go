@@ -209,6 +209,7 @@ func (p *Panel) routes() []route {
 		{"POST /recording-roles", p.withPanelAdmin(p.saveRecordingRoles)},
 		{"POST /ao-roles", p.withPanelAdmin(p.saveAORoles)},
 		{"POST /forum-groups", p.withPanelAdmin(p.saveForumGroups)},
+		{"POST /warning-immune-roles", p.withPanelAdmin(p.saveWarningImmuneRoles)},
 		{"GET " + settingsPath, p.withAdminPage(p.settingsPage)},
 		{"GET " + metricsPath, p.withAdminPage(p.metricsPage)},
 		{"GET " + joinersPath, p.withJoinersPage(p.joinersPage)},

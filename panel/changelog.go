@@ -48,35 +48,38 @@ var rankRoleFields = func() []string {
 }()
 
 // shownFields are every field a diff can carry, in the form's order: a
-// hub's fields, then the recording roles and the AO roles, the one field of
-// their sections' diffs, then the forum groups, the rank roles and the
-// Discharged role.
-var shownFields = slices.Concat([]string{fieldChannelName}, diffFields, []string{fieldRecordingRoles, fieldAORoles},
+// hub's fields, then the recording roles, the warning immune roles and the
+// AO roles, the one field of their sections' diffs, then the forum groups,
+// the rank roles and the Discharged role.
+var shownFields = slices.Concat([]string{fieldChannelName}, diffFields,
+	[]string{fieldRecordingRoles, fieldWarningImmuneRoles, fieldAORoles},
 	[]string{fieldFoxholeGroup, fieldJoinersGroups}, rankRoleFields, []string{fieldDischargedRole})
 
 // roleFields are the fields whose values are role IDs, shown by name.
-var roleFields = slices.Concat([]string{fieldModeratorRoles, fieldRecordingRoles, fieldAORoles}, rankRoleFields, []string{fieldDischargedRole})
+var roleFields = slices.Concat([]string{fieldModeratorRoles, fieldRecordingRoles, fieldWarningImmuneRoles, fieldAORoles}, rankRoleFields,
+	[]string{fieldDischargedRole})
 
 // fieldLabels name the fields a diff can carry as the change log shows
 // them: in the words of the form's label for each, as the Foxhole page's
 // change log names its own fields.
 var fieldLabels = map[string]string{
-	fieldChannelName:      "hub channel name",
-	fieldHubChannel:       "hub channel",
-	fieldBaseString:       "base string",
-	fieldPermissionSource: "permission source",
-	fieldModeratorRoles:   "moderator roles",
-	fieldUserLimit:        "user limit",
-	fieldBitrate:          "bitrate",
-	fieldDeleteDelay:      "delete delay in minutes",
-	fieldEnabled:          "enabled",
-	fieldRenamingAllowed:  "renaming allowed",
-	fieldLockingAllowed:   "locking allowed",
-	fieldRecordingRoles:   "recording roles",
-	fieldAORoles:          "AO roles",
-	fieldFoxholeGroup:     "Foxhole group",
-	fieldJoinersGroups:    "Joiners groups",
-	fieldDischargedRole:   "Discharged role",
+	fieldChannelName:        "hub channel name",
+	fieldHubChannel:         "hub channel",
+	fieldBaseString:         "base string",
+	fieldPermissionSource:   "permission source",
+	fieldModeratorRoles:     "moderator roles",
+	fieldUserLimit:          "user limit",
+	fieldBitrate:            "bitrate",
+	fieldDeleteDelay:        "delete delay in minutes",
+	fieldEnabled:            "enabled",
+	fieldRenamingAllowed:    "renaming allowed",
+	fieldLockingAllowed:     "locking allowed",
+	fieldRecordingRoles:     "recording roles",
+	fieldAORoles:            "AO roles",
+	fieldWarningImmuneRoles: "immune roles",
+	fieldFoxholeGroup:       "Foxhole group",
+	fieldJoinersGroups:      "Joiners groups",
+	fieldDischargedRole:     "Discharged role",
 }
 
 // permissionSourceNames are the permission source's stored values as the
@@ -170,7 +173,7 @@ type changeView struct {
 // its section holds, and its field already names the set.
 func (c changeView) Label() string {
 	switch c.Action {
-	case store.ChangeModerators, store.ChangeRecordingRoles, store.ChangeAORoles, store.ChangeForumGroups, store.ChangeRankRoles:
+	case store.ChangeModerators, store.ChangeRecordingRoles, store.ChangeAORoles, store.ChangeForumGroups, store.ChangeWarningImmuneRoles, store.ChangeRankRoles:
 		return string(store.ChangeUpdate)
 	}
 	return string(c.Action)

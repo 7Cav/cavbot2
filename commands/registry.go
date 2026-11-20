@@ -21,15 +21,15 @@ type Registry struct {
 // nil on a host with no bot store, and a game's runtime nil with no Winged
 // Aviator role for it too.
 // st is the bot store, nil on a host without one, where /loa and /awol
-// keep the pages of a long list.
-// /voice-rename, /voice-lock, /voice-unlock, /record and /winged-aviator are
-// declared either way, and /record whether recording is on or off: the
-// startup sync deletes any guild command the registry lacks, and Discord
-// keys command permissions by command ID, so a command that came and went
-// with configuration would shed its Server Settings restriction on every
-// such start. With no runtime each of them refuses. With no Foxhole runtime
-// the Foxhole commands refuse nothing: there is no Foxhole page to share
-// the roles with.
+// keep the pages of a long list and the warnings live.
+// /voice-rename, /voice-lock, /voice-unlock, /record, /winged-aviator, /warn
+// and /infractions are declared either way, and /record whether recording
+// is on or off: the startup sync deletes any guild command the registry
+// lacks, and Discord keys command permissions by command ID, so a command
+// that came and went with configuration would shed its Server Settings
+// restriction on every such start. With no runtime or store each of them
+// refuses. With no Foxhole runtime the Foxhole commands refuse nothing:
+// there is no Foxhole page to share the roles with.
 func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRuntime, aviators WingedAviatorRoles, st store.Store) *Registry {
 	r := &Registry{}
 	r.RegisterCommands(
@@ -50,6 +50,8 @@ func NewRegistry(tempVC *TempVC, foxhole *FoxholeRuntime, recording *RecordingRu
 		VoiceUnlock(tempVC),
 		Record(recording),
 		WingedAviator(aviators),
+		Warn(st),
+		Infractions(st),
 	)
 	return r
 }

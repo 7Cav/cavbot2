@@ -43,6 +43,16 @@ var savedForms = []savedForm{
 		section: func(t *testing.T, _ *testWorld, doc *html.Node) *html.Node { return recordingRolesSection(t, doc) },
 	},
 	{
+		name: "the warning immune roles",
+		post: func(t *testing.T, w *testWorld, role string) (string, url.Values) {
+			return "/warning-immune-roles", warningImmuneRolesForm(t, w.st, role)
+		},
+		values: [2]string{"role-mp", "role-hq"},
+		section: func(t *testing.T, _ *testWorld, doc *html.Node) *html.Node {
+			return findElement(doc, "section", "data-section", formWarnings)
+		},
+	},
+	{
 		name: "a hub's edit form",
 		post: func(t *testing.T, w *testWorld, baseString string) (string, url.Values) {
 			form := updateForm(t, w.st)

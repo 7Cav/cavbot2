@@ -5,6 +5,7 @@
   {{if .Settings.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Role details on this page may be out of date.</div>{{end}}
   {{template "rank-roles" .Settings}}
   {{template "recording-roles" .}}
+  {{template "warnings" .}}
   {{template "ao-roles" .}}
   {{template "forum-groups" .}}
 </main>
@@ -105,6 +106,28 @@
   </form>
   <div class="block">
     {{template "changes" .Settings.RecordingRoles.Changes}}
+  </div>
+  </section>
+{{end}}
+
+{{define "warnings"}}
+  <section class="warnings" data-section="warnings">
+  <form method="post" action="/warning-immune-roles#warnings" class="block" data-edit="warnings"{{if .Settings.RefusalFor "warnings"}} data-posted{{end}}>
+    <h2 class="block-header" id="warnings" tabindex="-1"{{if .Settings.RefusalFor "warnings"}} aria-describedby="refusal"{{end}}>Warnings</h2>
+    {{with .Settings.RefusalFor "warnings"}}{{template "refusal" .}}{{end}}
+    {{if .Settings.Warnings.Saved}}{{template "saved"}}{{end}}
+    <input type="hidden" name="version" value="{{.Settings.Warnings.Version}}">
+    <div class="block-row">
+      <div class="field" role="group" aria-labelledby="warning-immune-roles-label" aria-describedby="warning-immune-roles-hint">
+        <span class="field-label" id="warning-immune-roles-label">Immune roles</span>
+        {{template "picker" .Settings.Warnings.Picker}}
+        <span class="field-hint" id="warning-immune-roles-hint">/warn refuses members holding one of these roles. Bots and server admins are always immune.</span>
+      </div>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the immune roles</span></button></div>
+  </form>
+  <div class="block">
+    {{template "changes" .Settings.Warnings.Changes}}
   </div>
   </section>
 {{end}}

@@ -328,6 +328,24 @@ A/1-7 Staff, A/ACD Staff and Foxhole Staff, who lead the winged aviators.
 Any of them can make or end any member's status as a winged aviator.
 _Avoid_: aviation leadership, aviation managers.
 
+## Warnings
+
+The bot replaces MEE6's `/warn` and `/infractions` (#971).
+
+**Warning**:
+A record that a member broke a rule, with its reason, given with `/warn`.
+The bot keeps it and posts a public notice in the channel it was given in.
+A warning does nothing else to the member. Removing it deletes the record
+and marks the notice removed.
+_Avoid_: infraction (MEE6's word, kept only in command and button names),
+strike.
+
+**Immune role**:
+A role whose holders `/warn` refuses, set by a panel admin in the Settings
+page's Warnings section. Bots, the server owner and members with
+Administrator are always immune.
+_Avoid_: protected role, exempt role.
+
 ## Temporary voice channels
 
 The bot replaces MEE6's "Temporary Channels" plugin. A member joins a hub, the
