@@ -561,6 +561,8 @@ func TestRecordLetsTheRecorderIntoItsChannelForTheRecording(t *testing.T) {
 		{"channel the recorder can't see", permCategoryOverwrites()},
 		{"recorder already let in by an admin", append(permCategoryOverwrites(),
 			&discordgo.PermissionOverwrite{ID: testRecorder, Type: discordgo.PermissionOverwriteTypeMember, Allow: permJoin | discordgo.PermissionSendMessages})},
+		{"recorder kept out by its own overwrite", append(permCategoryOverwrites(),
+			&discordgo.PermissionOverwrite{ID: testRecorder, Type: discordgo.PermissionOverwriteTypeMember, Allow: discordgo.PermissionVoiceSpeak, Deny: discordgo.PermissionVoiceConnect})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := newRecordScene(t, testRecorder)

@@ -237,11 +237,12 @@ type RecordingRuntime struct {
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
 	running map[string]*activeRecording
-	// letIn holds each recorder and channel the runtime gave an overwrite,
-	// until the recorder's leave there removes it. A recorder a cut short
+	// letIn holds each recorder and channel whose overwrite the runtime set,
+	// until the recorder's leave there undoes it. The value is the
+	// overwrite it replaced, nil when there was none. A recorder a cut short
 	// freed can start in another channel before that leave runs, so the
 	// channel is part of the key.
-	letIn map[recorderInChannel]bool
+	letIn map[recorderInChannel]*discordgo.PermissionOverwrite
 
 	// recordCommandID is /record's ID, empty until the startup sync has
 	// registered the commands.
@@ -307,7 +308,7 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		panelURL:  panelURL,
 		builtAt:   recordingNow(),
 		running:   make(map[string]*activeRecording),
-		letIn:     make(map[recorderInChannel]bool),
+		letIn:     make(map[recorderInChannel]*discordgo.PermissionOverwrite),
 	}
 	recordingAfterFunc(0, r.sweepRetention)
 	recordingAfterFunc(0, r.recoverWhenListed)
@@ -698,18 +699,30 @@ func (r *RecordingRuntime) reserveLocked(recorderID, channelID, starterID string
 // channel it is about to record, which its roles may not reach. Discord
 // ignores a join to a channel the recorder can't see, so without it the
 // join would wait out its deadline (#958). An overwrite the recorder has
-// there already is left as it is.
+// there already that lets it join is left as it is. One that keeps it out
+// gains recorderAccess for the recording, and the rest of it stays.
 func (r *RecordingRuntime) letRecorderIn(recorderID, channelID string) error {
-	if ch, err := r.mgr.Channel(channelID); err == nil && slices.ContainsFunc(ch.PermissionOverwrites, func(o *discordgo.PermissionOverwrite) bool {
-		return o.ID == recorderID && o.Type == discordgo.PermissionOverwriteTypeMember
-	}) {
-		return nil
+	var prior *discordgo.PermissionOverwrite
+	if ch, err := r.mgr.Channel(channelID); err == nil {
+		if i := slices.IndexFunc(ch.PermissionOverwrites, func(o *discordgo.PermissionOverwrite) bool {
+			return o.ID == recorderID && o.Type == discordgo.PermissionOverwriteTypeMember
+		}); i >= 0 {
+			o := *ch.PermissionOverwrites[i]
+			if o.Allow&recorderAccess == recorderAccess && o.Deny&recorderAccess == 0 {
+				return nil
+			}
+			prior = &o
+		}
 	}
-	if err := r.mgr.ChannelPermissionSet(channelID, recorderID, discordgo.PermissionOverwriteTypeMember, recorderAccess, 0, recorderLetInReason); err != nil {
+	allow, deny := int64(recorderAccess), int64(0)
+	if prior != nil {
+		allow, deny = prior.Allow|recorderAccess, prior.Deny&^recorderAccess
+	}
+	if err := r.mgr.ChannelPermissionSet(channelID, recorderID, discordgo.PermissionOverwriteTypeMember, allow, deny, recorderLetInReason); err != nil {
 		return err
 	}
 	r.mu.Lock()
-	r.letIn[recorderInChannel{recorderID, channelID}] = true
+	r.letIn[recorderInChannel{recorderID, channelID}] = prior
 	r.mu.Unlock()
 	return nil
 }
@@ -717,20 +730,27 @@ func (r *RecordingRuntime) letRecorderIn(recorderID, channelID string) error {
 // recorderInChannel is a recorder and a channel it was let into.
 type recorderInChannel struct{ recorderID, channelID string }
 
-// letRecorderOut removes the overwrite letRecorderIn gave a recorder on a
-// channel, if it gave one. One that won't go is a WARN line: it lets a
-// recorder in, which harms nothing.
+// letRecorderOut undoes what letRecorderIn set on a channel, if it set
+// anything: it deletes the overwrite it added, or puts back the one it
+// changed. One that won't undo is a WARN line: it lets a recorder in, which
+// harms nothing.
 func (r *RecordingRuntime) letRecorderOut(recorderID, channelID string) {
 	key := recorderInChannel{recorderID, channelID}
 	r.mu.Lock()
-	ok := r.letIn[key]
+	prior, ok := r.letIn[key]
 	delete(r.letIn, key)
 	r.mu.Unlock()
 	if !ok {
 		return
 	}
-	if err := r.mgr.ChannelPermissionDelete(channelID, recorderID, recorderLetOutReason); err != nil {
-		utils.Warn("Recorder overwrite not removed", "recorder", recorderID, "channel_id", channelID, "error", err)
+	var err error
+	if prior == nil {
+		err = r.mgr.ChannelPermissionDelete(channelID, recorderID, recorderLetOutReason)
+	} else {
+		err = r.mgr.ChannelPermissionSet(channelID, recorderID, discordgo.PermissionOverwriteTypeMember, prior.Allow, prior.Deny, recorderLetOutReason)
+	}
+	if err != nil {
+		utils.Warn("Recorder overwrite not undone", "recorder", recorderID, "channel_id", channelID, "error", err)
 	}
 }
 
