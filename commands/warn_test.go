@@ -37,6 +37,7 @@ type fakeWarnDiscord struct {
 	sent     []*discordgo.MessageSend
 	sentTo   []string
 	edits    []*discordgo.MessageEdit
+	editErr  error
 	sendErr  error
 	perms    []*discordgo.GuildApplicationCommandPermissions
 	permsErr error
@@ -66,6 +67,9 @@ func (f *fakeWarnDiscord) ChannelMessageEditComplex(m *discordgo.MessageEdit, _ 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.edits = append(f.edits, m)
+	if f.editErr != nil {
+		return nil, f.editErr
+	}
 	return &discordgo.Message{ID: m.ID}, nil
 }
 
@@ -604,6 +608,40 @@ func TestInfractionsWithNoReadableStoreSaysSo(t *testing.T) {
 			reply := infractions(t, c.st)
 			if !strings.HasPrefix(reply, "❌") || !strings.Contains(reply, c.phrase) {
 				t.Errorf("reply = %q, want a ❌ saying %q", reply, c.phrase)
+			}
+		})
+	}
+}
+
+// A notice Discord won't edit leaves the press's reply saying so, whether
+// the press removed the warning or found it already removed.
+func TestRemoveButtonWhoseNoticeEditFailsSaysSo(t *testing.T) {
+	cases := []struct {
+		name           string
+		alreadyRemoved bool
+		verdict        string
+	}{
+		{name: "a removal", verdict: "✅"},
+		{name: "a warning already removed", alreadyRemoved: true, verdict: "❌"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sc := newWarnScene(t)
+			sc.warn(warnTargetIs{}, "Reason")
+			if c.alreadyRemoved {
+				if _, err := sc.store.RemoveWarning(context.Background(), warnGuild, sc.warnings()[0].ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sc.d.editErr = errFirstRespond
+
+			reply := sc.press(0, []string{warnModRole}, discordgo.PermissionUseApplicationCommands)
+
+			if !strings.HasPrefix(reply, c.verdict) || !strings.Contains(reply, warnNoticeStalePhrase) {
+				t.Errorf("reply = %q, want a %s saying %q", reply, c.verdict, warnNoticeStalePhrase)
+			}
+			if list := sc.warnings(); len(list) != 0 {
+				t.Errorf("warnings = %+v, want the warning gone", list)
 			}
 		})
 	}

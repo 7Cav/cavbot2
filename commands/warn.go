@@ -57,6 +57,10 @@ const (
 	warnRemovedFooter        = "Warning removed"
 )
 
+// warnNoticeStaleSentence ends a press's reply when the notice's edit
+// failed.
+const warnNoticeStaleSentence = " " + warnNoticeStalePhrase + " Press its button again to update it."
+
 // warnStore is the subset of the bot store warnings live in.
 type warnStore interface {
 	GetWarningImmuneRoles(ctx context.Context, guildID string) (store.WarningImmuneRoles, error)
@@ -80,8 +84,9 @@ type warnDiscord interface {
 
 type sessionWarnDiscord struct{ *discordgo.Session }
 
-// cachedChannel copies the fields under State.RLock: the gateway handlers
-// overwrite a cached channel in place (GuildData in temp_vc.go).
+// cachedChannel copies the fields under State.RLock, as GuildData in
+// temp_vc.go does: discordgo's State.ChannelAdd overwrites a cached channel
+// in place under State.Lock.
 func (s sessionWarnDiscord) cachedChannel(guildID, channelID string) (discordgo.ChannelType, string, bool) {
 	st := s.State
 	if st == nil {
@@ -348,8 +353,11 @@ func runWarnRemove(r utils.InteractionResponder, d warnDiscord, w *warnings, int
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		// The edit repairs a notice whose edit at the removal failed.
-		editWarnNotice(d, interaction)
-		editNoticeReply(r, interaction, "❌ "+warnAlreadyRemovedPhrase)
+		reply := "❌ " + warnAlreadyRemovedPhrase
+		if !editWarnNotice(d, interaction) {
+			reply += warnNoticeStaleSentence
+		}
+		editNoticeReply(r, interaction, reply)
 		return
 	case err != nil:
 		captureError("Warning not removed", err, "guild_id", guildID, "warning_id", id)
@@ -360,7 +368,7 @@ func runWarnRemove(r utils.InteractionResponder, d warnDiscord, w *warnings, int
 	utils.Info("Warning removed", "warning_id", id, "member_id", removed.MemberID, "discord_id", discordID)
 	reply := "✅ " + warnRemovedPhrase + " " + mention(removed.MemberID) + "."
 	if !editWarnNotice(d, interaction) {
-		reply += " " + warnNoticeStalePhrase + " Press its button again to update it."
+		reply += warnNoticeStaleSentence
 	}
 	editNoticeReply(r, interaction, reply)
 	utils.Info("✨ Done!", "command", warnCommandName)
