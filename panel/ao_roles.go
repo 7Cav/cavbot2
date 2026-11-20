@@ -33,7 +33,6 @@ const (
 	aoRoleChangesRead = "list AO roles changes"
 )
 
-// aoRolesInput is the AO roles section's form as posted.
 type aoRolesInput struct {
 	// Version is the set's version when the section loaded, from a hidden
 	// input. A save whose version the set is no longer at is a stale form.

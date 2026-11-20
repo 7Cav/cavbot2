@@ -24,27 +24,6 @@ func addJoinersViewer(f *fakeForum) *forumAccount {
 	return f.addUser(6789, "Lee.J", 2, []int{35, testJoinersGroupID})
 }
 
-// The panel's root takes each signed-in user to the page they land on: a
-// Joiners viewer to the Joiners page, unless the Foxhole page outranks it.
-func TestRootSendsEachUserToTheirLanding(t *testing.T) {
-	cases := []struct {
-		name      string
-		secondary []int
-		want      string
-	}{
-		{"Joiners viewer", []int{35, testJoinersGroupID}, joinersPath},
-		{"Foxhole manager and Joiners viewer", []int{testFoxholeGroupID, testJoinersGroupID}, foxholePath},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := newTestWorld(t)
-			signInAs(t, w.forum, w.b, w.forum.addUser(2468, "Smith.F", 2, tc.secondary))
-
-			assertRedirect(t, w.b.get("/"), tc.want)
-		})
-	}
-}
-
 // outsiderUsername is the forum username of the outsider addOutsider adds.
 const outsiderUsername = "Roe.R"
 

@@ -111,9 +111,14 @@ func TestPipelineNests(t *testing.T) {
 	}
 	in := JoinersInput{Now: now, Week: w0, State: collecting, Events: events, Days: days, Members: members, AORoles: []string{"ao"}, RankRoles: []string{"rank"}}
 
-	want := Pipeline{Known: true, Joined: 6, Stayed: 5, HoldsAO: 3, Talked: 2, HoldsRank: 1}
+	want := Pipeline{Known: true, AOKnown: true, Joined: 6, Stayed: 5, HoldsAO: 3, Talked: 2, HoldsRank: 1}
 	if p := BuildJoiners(in).Pipeline; p != want {
 		t.Errorf("pipeline = %+v, want %+v", p, want)
+	}
+	noAO := in
+	noAO.AORoles = nil
+	if p := BuildJoiners(noAO).Pipeline; !p.Known || p.AOKnown {
+		t.Errorf("pipeline with no AO roles set = %+v, want known with the AO steps unknown", p)
 	}
 	in.State = State{StartedAt: wk(-7, time.Hour)}
 	if p := BuildJoiners(in).Pipeline; p.Known {

@@ -3,6 +3,7 @@ package panel
 import (
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -164,26 +165,26 @@ func TestConfigFromEnvRefusesAFoxholeGroupThatIsNotANumber(t *testing.T) {
 	}
 }
 
-// JOINERS_GROUP_IDS names the Joiners groups: a user in any of them is a
-// Joiners viewer, who lands on the Joiners page. Unset, it names none.
+// JOINERS_GROUP_IDS names the Joiners groups. Unset, it names none.
 func TestJoinersGroupsAreTheOnesTheVariableNames(t *testing.T) {
 	cases := []struct {
 		name  string
 		value string
-		want  string
+		want  []int
 	}{
-		{"set", "410, 411", joinersPath},
-		{"unset", "", recordingsPath},
+		{"set", "410, 411", []int{410, 411}},
+		{"unset", "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newFakeForum(t)
-			setPanelEnv(t, f)
+			setPanelEnv(t, newFakeForum(t))
 			t.Setenv("JOINERS_GROUP_IDS", tc.value)
-			w := worldFromEnv(t, f)
-			signInAs(t, f, w.b, f.addUser(2468, "Smith.F", 2, []int{35, 411}))
 
-			assertRedirect(t, w.b.get("/"), tc.want)
+			cfg, err := ConfigFromEnv()
+
+			if err != nil || !slices.Equal(cfg.JoinersGroupIDs, tc.want) {
+				t.Errorf("ConfigFromEnv = %v, %v; want Joiners groups %v", cfg.JoinersGroupIDs, err, tc.want)
+			}
 		})
 	}
 }

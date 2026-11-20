@@ -20,7 +20,6 @@ import (
 // metrics.BuildJoiners makes the figures; this file reads them and lays
 // them out.
 
-// joinersPath is the Joiners page's address.
 const joinersPath = "/joiners"
 
 // The Joiners page's query parameters: the Monday of the week shown, and
@@ -30,7 +29,7 @@ const (
 	paramAO   = "ao"
 )
 
-// The keys of the AOs table's two rows that are no AO role.
+// Row keys that are not role IDs.
 const (
 	aoNone = "none"
 	aoLeft = "left"
@@ -38,7 +37,6 @@ const (
 
 const noAORoleName = "No AO role"
 
-// joinersView is what the Joiners page renders from.
 type joinersView struct {
 	// ListNotice stands in for every block while the member list isn't
 	// complete, since each of them reads it.
@@ -65,15 +63,14 @@ type joinerRowView struct {
 	Spark           sparkline
 }
 
-// joinerListView is the selected row's joiners, latest first.
 type joinerListView struct {
 	Name, Count string
 	Members     []joinerMember
 }
 
 type joinerMember struct {
-	ID, DisplayName, Username string
-	JoinedAt                  time.Time
+	DisplayName, Username string
+	JoinedAt              time.Time
 }
 
 // joinersPage is GET /joiners, read under the hub page's time budget and
@@ -152,6 +149,9 @@ func (p *Panel) joiners(ctx context.Context, reads *pageReads, now, week time.Ti
 	}
 	listed := make(map[string]commands.ListedMember, len(list.Members))
 	for _, lm := range list.Members {
+		if lm.Bot {
+			continue
+		}
 		in.Members = append(in.Members, metrics.Member{ID: lm.ID, JoinedAt: lm.JoinedAt, RoleIDs: lm.RoleIDs})
 		listed[lm.ID] = lm
 	}
@@ -188,12 +188,12 @@ func joinersViewOf(j metrics.Joiners, roleNames map[string]string, listed map[st
 	list.Count = shown(rowOf.Count, fmtCount)
 	for _, m := range rowOf.Members {
 		lm := listed[m.ID]
-		list.Members = append(list.Members, joinerMember{ID: m.ID, DisplayName: lm.DisplayName(), Username: lm.Username, JoinedAt: m.JoinedAt})
+		list.Members = append(list.Members, joinerMember{DisplayName: lm.DisplayName(), Username: lm.Username, JoinedAt: m.JoinedAt})
 	}
 	v.List = list
 	pl := j.Pipeline
-	v.Pipeline = funnelOf(pl.Known, []funnelCount{{"Joined", pl.Joined}, {"Stayed past 24 h", pl.Stayed},
-		{"Holds an AO role", pl.HoldsAO}, {"Talked", pl.Talked}, {"Holds a rank role", pl.HoldsRank}})
+	v.Pipeline = funnelOf([]funnelCount{{"Joined", pl.Joined, pl.Known}, {"Stayed past 24 h", pl.Stayed, pl.Known},
+		{"Holds an AO role", pl.HoldsAO, pl.AOKnown}, {"Talked", pl.Talked, pl.AOKnown}, {"Holds a rank role", pl.HoldsRank, pl.AOKnown}})
 	return v
 }
 

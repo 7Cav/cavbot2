@@ -22,7 +22,7 @@
               <th scope="row"{{if .Quiet}} class="mx-quiet"{{end}}>{{if .Href}}<a href="{{.Href}}"{{if .Selected}} aria-current="true"{{end}}>{{.Name}}</a>{{else}}{{.Name}}{{end}}</th>
               <td class="num" data-field="count">{{.Count}}</td>
               <td class="num" data-field="average">{{.Average}}</td>
-              <td>{{with .Spark}}<svg class="mx-spark" width="96" height="22" viewBox="0 0 96 22" role="img" aria-label="{{.Label}}"><title>{{.Label}}</title>{{if .Points}}<polyline points="{{.Points}}"/>{{end}}{{if .HasLast}}<circle cx="{{.LastX}}" cy="{{.LastY}}" r="2.5"/>{{end}}</svg>{{end}}</td>
+              <td>{{template "spark" .Spark}}</td>
             </tr>
           {{end}}
           </tbody>
@@ -38,7 +38,7 @@
           <thead><tr><th>Member</th><th>Discord</th><th>Joined</th></tr></thead>
           <tbody>
           {{range .Members}}
-            <tr data-member="{{.ID}}"><th scope="row" data-field="display_name">{{.DisplayName}}</th><td class="jn-user" data-field="username">{{.Username}}</td><td><time datetime="{{.JoinedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .JoinedAt}}</time></td></tr>
+            <tr><th scope="row" data-field="display_name">{{.DisplayName}}</th><td class="jn-user" data-field="username">{{.Username}}</td><td><time datetime="{{.JoinedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{template "zulu" .JoinedAt}}</time></td></tr>
           {{else}}
             <tr><td colspan="3" data-field="nobody-joined">Nobody joined that week.</td></tr>
           {{end}}
@@ -50,11 +50,7 @@
     </div>
     <section class="block" data-field="pipeline">
       <h2 class="block-header">Pipeline <small>joined 5 to 8 weeks ago, whole server</small></h2>
-      <table class="mx-funnel">
-        <tbody>
-        {{range .Pipeline}}<tr><th scope="row">{{.Label}}</th><td class="mx-bar"><svg width="100%" height="14" role="img" aria-label="{{.Label}}: {{.Count}}, {{.Share}} of joins"><rect width="{{.Width}}" height="14" rx="2"><title>{{.Label}}: {{.Count}}, {{.Share}} of joins</title></rect></svg></td><td class="num">{{.Count}}</td><td class="num">{{.Share}}</td></tr>{{end}}
-        </tbody>
-      </table>
+      {{template "funnel" .Pipeline}}
       <div class="block-row mx-note">Talked: sent a message or was in voice.</div>
     </section>
   </div>

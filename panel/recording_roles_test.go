@@ -157,27 +157,63 @@ func TestRecordingRolesSaveWhoseSetChangesBeforeItsWriteIsStale(t *testing.T) {
 	}
 }
 
-// Only an eligible role can be added: a managed role is refused on the
-// section, and the set and its entries stay as they were.
-func TestRecordingRolesSaveRefusesAManagedRoleAndWritesNothing(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), settingsPath)
-	before := storedRecordingRoles(t, w.st)
+// roleSetSave is a Settings section that saves a set of roles the way the
+// recording roles do, with what a refusal test posts to it and reads back.
+type roleSetSave struct {
+	name, path, section, field string
+	form                       func(*testing.T, store.Store, ...string) url.Values
+	stored                     func(*testing.T, store.Store) ([]string, int64)
+}
 
-	res := w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp", "role-bot"))
+var roleSetSaves = []roleSetSave{
+	{"recording roles", "/recording-roles", "recording-roles", fieldRecordingRoles, recordingRolesForm,
+		func(t *testing.T, st store.Store) ([]string, int64) {
+			r := storedRecordingRoles(t, st)
+			return r.RoleIDs, r.Version
+		}},
+	{"AO roles", "/ao-roles", "ao-roles", fieldAORoles, aoRolesForm,
+		func(t *testing.T, st store.Store) ([]string, int64) {
+			r := storedAORoles(t, st)
+			return r.RoleIDs, r.Version
+		}},
+}
 
+// refused checks a refused save of the set: a 4xx, the section's note under
+// dataError, and the set, its version and its entries as before.
+func (tc roleSetSave) refused(t *testing.T, w *testWorld, res *http.Response, dataError string, beforeRoles []string, beforeVersion int64) {
+	t.Helper()
 	if !isClientError(res.StatusCode) {
 		t.Errorf("status = %d, want 4xx", res.StatusCode)
 	}
-	if findElement(recordingRolesSection(t, parseHTML(t, res)), "", "data-error", "recording_roles") == nil {
-		t.Error("the recording roles section carries no data-error=recording_roles")
+	sec := findElement(parseHTML(t, res), "section", "data-section", tc.section)
+	if sec == nil {
+		t.Fatalf("page has no section under data-section=%s", tc.section)
 	}
-	if after := storedRecordingRoles(t, w.st); !sameSet(after.RoleIDs, before.RoleIDs) || after.Version != before.Version {
-		t.Errorf("stored recording roles = %+v, want them as before, %+v", after, before)
+	if findElement(sec, "", "data-error", dataError) == nil {
+		t.Errorf("the %s section carries no data-error=%s", tc.section, dataError)
+	}
+	if roles, version := tc.stored(t, w.st); !sameSet(roles, beforeRoles) || version != beforeVersion {
+		t.Errorf("stored roles = %v at version %d, want them as before, %v at %d", roles, version, beforeRoles, beforeVersion)
 	}
 	if entries := storedChangeLog(t, w.st, 0); len(entries) != 1 {
 		t.Errorf("%d entries under no hub, want the first save's alone", len(entries))
+	}
+}
+
+// Only an eligible role can be added: a managed role is refused on the
+// section, and the set and its entries stay as they were.
+func TestRoleSetSaveRefusesAManagedRoleAndWritesNothing(t *testing.T) {
+	for _, tc := range roleSetSaves {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			assertRedirect(t, w.b.postForm(tc.path, tc.form(t, w.st, "role-mp")), settingsPath)
+			roles, version := tc.stored(t, w.st)
+
+			res := w.b.postForm(tc.path, tc.form(t, w.st, "role-mp", "role-bot"))
+
+			tc.refused(t, w, res, tc.field, roles, version)
+		})
 	}
 }
 
@@ -291,24 +327,17 @@ func TestRecordingRolesSectionShowsItsOwnSavesNewestFirst(t *testing.T) {
 // with role-mp and role-hq stored, posting them in the other order is
 // refused on the section, and the set, its version and its entries stay as
 // they were.
-func TestRecordingRolesSaveThatChangesNothingIsRefused(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp", "role-hq")), settingsPath)
-	before := storedRecordingRoles(t, w.st)
+func TestRoleSetSaveThatChangesNothingIsRefused(t *testing.T) {
+	for _, tc := range roleSetSaves {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			assertRedirect(t, w.b.postForm(tc.path, tc.form(t, w.st, "role-mp", "role-hq")), settingsPath)
+			roles, version := tc.stored(t, w.st)
 
-	res := w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq", "role-mp"))
+			res := w.b.postForm(tc.path, tc.form(t, w.st, "role-hq", "role-mp"))
 
-	if !isClientError(res.StatusCode) {
-		t.Errorf("status = %d, want 4xx", res.StatusCode)
-	}
-	if findElement(recordingRolesSection(t, parseHTML(t, res)), "", "data-error", "unchanged") == nil {
-		t.Error("the recording roles section carries no data-error=unchanged note")
-	}
-	if after := storedRecordingRoles(t, w.st); !sameSet(after.RoleIDs, before.RoleIDs) || after.Version != before.Version {
-		t.Errorf("stored recording roles = %+v, want them as before, %+v", after, before)
-	}
-	if entries := storedChangeLog(t, w.st, 0); len(entries) != 1 {
-		t.Errorf("%d entries under no hub, want the first save's alone", len(entries))
+			tc.refused(t, w, res, "unchanged", roles, version)
+		})
 	}
 }

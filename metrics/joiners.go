@@ -46,9 +46,10 @@ type JoinerRow struct {
 }
 
 // Pipeline is the Cohort's joiners as a nested funnel, each step a subset
-// of the one before.
+// of the one before. AOKnown covers HoldsAO and the steps after it, which
+// mean nothing while no AO roles are set.
 type Pipeline struct {
-	Known                                      bool
+	Known, AOKnown                             bool
 	Joined, Stayed, HoldsAO, Talked, HoldsRank int
 }
 
@@ -111,8 +112,7 @@ func trendRow(selected time.Time, count func(time.Time) Maybe[int]) JoinerRow {
 	}
 	r.Count = r.Trend[TrendWeeks-1]
 	sum, ok := 0, true
-	for k := -4; k <= -1; k++ {
-		c := count(at(k))
+	for _, c := range r.Trend[TrendWeeks-5 : TrendWeeks-1] {
 		sum, ok = sum+c.V, ok && c.Known
 	}
 	r.Average = maybe(float64(sum)/4, ok)
@@ -124,7 +124,7 @@ func (b *builder) pipeline(present map[string]Member, ao, rank []string) Pipelin
 	if !ok {
 		return Pipeline{}
 	}
-	p := Pipeline{Known: true, Joined: len(js)}
+	p := Pipeline{Known: true, AOKnown: len(ao) > 0, Joined: len(js)}
 	for _, j := range js {
 		if b.left(j) {
 			continue

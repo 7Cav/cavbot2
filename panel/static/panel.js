@@ -1423,8 +1423,8 @@ var unsavedEdits = (function () {
   if (form && atAddPreview() && unsavedEdits.restored(form)) { preview(form); }
 })();
 
-/* The member list notice on the Foxhole page (spec #434, ADR 0013). While
-   the member list is partial a notice stands in the holder list's place,
+/* The member list notice on the Foxhole and Joiners pages (spec #434, ADR
+   0013). While the member list is partial a notice stands in what it feeds,
    with a Reload link to the page in the view it shows. A page that answers
    a refused selection bar action, or whose address names members, links the
    selection instead. The script loads that address in the background, where
@@ -1451,6 +1451,7 @@ var unsavedEdits = (function () {
   var started = 0;
   // address is the address this page's Reload link names.
   var address = notice.querySelector('[data-field="reload"]').getAttribute('href');
+  var pageName = document.querySelector('main[data-page]').getAttribute('data-page');
 
   function holdsText() {
     return Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type]), textarea'))
@@ -1498,7 +1499,7 @@ var unsavedEdits = (function () {
       .then(function (answer) {
         // A sign-in page or an error page says nothing about the list:
         // try again later.
-        var page = answer.ok && answer.doc.querySelector('main[data-page="foxhole"]');
+        var page = answer.ok && answer.doc.querySelector('main[data-page="' + pageName + '"]');
         if (!page) {
           later();
           return;

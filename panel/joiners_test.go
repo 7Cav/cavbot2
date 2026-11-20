@@ -30,8 +30,9 @@ func joinerNames(t *testing.T, doc *html.Node) []string {
 }
 
 // The AOs table has a row per AO role, highest role position first, then No
-// AO role and Joined and left, each counting the week's joiners. The list
-// shows the first AO's joiners by default, and the row ao names otherwise.
+// AO role and Joined and left, each counting the week's joiners, bots left
+// out. The list shows the first AO's joiners by default, and the row ao
+// names otherwise.
 func TestJoinersPageListsTheWeeksJoinersByAORole(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
@@ -44,6 +45,7 @@ func TestJoinersPageListsTheWeeksJoinersByAORole(t *testing.T) {
 		{ID: "300000000000000002", Username: "dreyes", GlobalName: "Reyes.D", JoinedAt: now.Add(-26 * time.Hour), RoleIDs: []string{"role-sc", "role-arma"}},
 		{ID: "300000000000000003", Username: "quietmoth", JoinedAt: now.Add(-50 * time.Hour)},
 		{ID: "300000000000000004", Username: "tng", Nick: "Ng.T", JoinedAt: now.AddDate(0, 0, -14), RoleIDs: []string{"role-sc"}},
+		{ID: "300000000000000005", Username: "musicbot", JoinedAt: now.Add(-3 * time.Hour), Bot: true},
 	}})
 
 	doc := parseHTML(t, w.b.get(joinersPath))

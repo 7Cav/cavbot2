@@ -191,7 +191,7 @@ func metricsViewOf(r metrics.Report, since time.Time) metricsView {
 		}})
 	}
 	c := r.Cohort
-	v.Funnel = funnelOf(c.Known, []funnelCount{{"Joined", c.Joined}, {"Stayed past 24 h", c.Stayed}, {"Talked within 7 days", c.Talked}, {"Active at 30 days", c.Active30}})
+	v.Funnel = funnelOf([]funnelCount{{"Joined", c.Joined, c.Known}, {"Stayed past 24 h", c.Stayed, c.Known}, {"Talked within 7 days", c.Talked, c.Known}, {"Active at 30 days", c.Active30, c.Known}})
 	v.Reply = "Median time to first reply: " + shown(c.MedianReply, fmtWait) + "."
 	if c.Known && c.Messaged > 0 {
 		v.Reply += fmt.Sprintf(" %s of the %s who sent a message got a reply.", fmtCount(c.Replied), fmtCount(c.Messaged))
@@ -210,15 +210,16 @@ func weekSpan(monday time.Time) string {
 type funnelCount struct {
 	label string
 	n     int
+	known bool
 }
 
 // funnelOf lays out a funnel whose first step counts everyone, each step
-// with its share of the first. An unknown funnel reads unknownFigure.
-func funnelOf(known bool, counts []funnelCount) []funnelStep {
+// with its share of the first. An unknown step reads unknownFigure.
+func funnelOf(counts []funnelCount) []funnelStep {
 	steps := make([]funnelStep, 0, len(counts))
 	for _, c := range counts {
 		step := funnelStep{Label: c.label, Count: unknownFigure, Share: unknownFigure, Width: "0%"}
-		if known {
+		if c.known {
 			step.Count = fmtCount(c.n)
 			if all := counts[0].n; all > 0 {
 				share := float64(c.n) / float64(all)

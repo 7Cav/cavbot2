@@ -131,8 +131,10 @@ func railLinks(t *testing.T, doc *html.Node) map[string]string {
 // Joiners viewers, and the Recordings link to everyone, and every link it
 // shows, the mark included, lands on the page it names.
 // The panel admin row's Hubs link is a regression pin: panel admins keep the
-// hub page as it was. The row in both groups catches a root that sends
-// every Foxhole manager to the Foxhole page, panel admins among them.
+// hub page as it was. The panel admin and Foxhole manager row catches a
+// root that sends every Foxhole manager to the Foxhole page, panel admins
+// among them, and the Foxhole manager and Joiners viewer row one that puts
+// the Joiners page above the Foxhole page.
 func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -148,6 +150,7 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 		{"Foxhole manager", 2, []int{testFoxholeGroupID}, false, true, true, false, "foxhole"},
 		{"panel admin and Foxhole manager", 2, []int{47, testFoxholeGroupID}, true, true, true, true, "hubs"},
 		{"Joiners viewer", 2, []int{testJoinersGroupID}, false, false, true, true, "joiners"},
+		{"Foxhole manager and Joiners viewer", 2, []int{testFoxholeGroupID, testJoinersGroupID}, false, true, true, true, "foxhole"},
 		{"outsider", 2, []int{35}, false, false, true, false, "recordings"},
 	}
 	for _, tc := range cases {
