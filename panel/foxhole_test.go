@@ -13,8 +13,8 @@ import (
 	"golang.org/x/net/html"
 )
 
-// testFoxholeGroupID is the Foxhole group the test panel is configured
-// with, the production default.
+// testFoxholeGroupID is the Foxhole group while no forum groups are saved,
+// the forum's own, spelled by hand so a changed default fails the tests.
 const testFoxholeGroupID = 323
 
 // The Foxhole manager addFoxholeManager adds: their forum user ID and
@@ -156,6 +156,7 @@ func TestRailShowsOnlyThePagesTheUserOpensAndEachLinkOpensIt(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newTestWorld(t, testHub())
+			seedForumGroups(t, w.st)
 			user := w.forum.addUser(2468, "Smith.F", tc.primary, tc.secondary)
 
 			links := railLinks(t, parseHTML(t, follow(t, w.b, signInAs(t, w.forum, w.b, user))))

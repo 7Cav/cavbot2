@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -15,12 +16,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/7cav/cavbot2/store"
 )
 
 // The forum groups the personas belong to. adminGroupID and foxholeGroupID
-// are the production values of PANEL_GROUP_IDS (its first entry) and
-// FOXHOLE_GROUP_ID. In fake mode up sets the bot to exactly these, so each
-// persona means the same thing to the bot whatever the env file holds.
+// are the production values of PANEL_GROUP_IDS (its first entry) and the
+// Foxhole group. In fake mode up sets the bot to exactly these, in its env
+// and its store, so each persona means the same thing to the bot whatever
+// the env file holds or an earlier run saved.
 const (
 	registeredGroupID = 2
 	adminGroupID      = 71
@@ -51,6 +55,44 @@ var personas = []persona{
 	{Key: "admin", Label: "Panel admin", UserID: 900001, Username: "Smoke Admin", Primary: registeredGroupID, Secondary: []int{adminGroupID}},
 	{Key: "foxhole", Label: "Foxhole manager", UserID: 900002, Username: "Smoke Foxhole", Primary: registeredGroupID, Secondary: []int{foxholeGroupID}},
 	{Key: "member", Label: "Outsider", UserID: 900003, Username: "Smoke Member", Primary: registeredGroupID, Secondary: []int{}},
+}
+
+// seedPersonaGroups opens the bot's store at dsn, migrating it as the bot
+// does at startup, and seeds the personas' forum groups.
+func seedPersonaGroups(ctx context.Context, dsn, guildID string) error {
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+	return seedForumGroups(ctx, st, guildID)
+}
+
+// seedForumGroups saves foxholeGroupID as the Foxhole group and no Joiners
+// groups, with a change log entry naming what it changed, unless the store
+// holds them already.
+func seedForumGroups(ctx context.Context, st store.Store, guildID string) error {
+	stored, err := st.GetForumGroups(ctx, guildID)
+	if err != nil {
+		return err
+	}
+	// The keys are the panel's form fields, which its change log reads.
+	diff := map[string]any{}
+	if stored.FoxholeGroupID != foxholeGroupID {
+		diff["foxhole_group"] = map[string]any{"before": stored.FoxholeGroupID, "after": foxholeGroupID}
+	}
+	if len(stored.JoinersGroupIDs) > 0 {
+		diff["joiners_groups"] = map[string]any{"before": slices.Sorted(slices.Values(stored.JoinersGroupIDs)), "after": []int{}}
+	}
+	if len(diff) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(diff)
+	if err != nil {
+		return err
+	}
+	entry := store.ChangeLogEntry{ForumUsername: "smoke up", Action: store.ChangeForumGroups, Diff: raw}
+	return st.SaveForumGroups(ctx, guildID, store.ForumGroups{FoxholeGroupID: foxholeGroupID, Version: stored.Version}, entry)
 }
 
 // Groups is the persona's groups as the consent page shows them.

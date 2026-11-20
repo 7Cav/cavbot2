@@ -74,7 +74,7 @@ func TestSmokeOverridesSendSignInToTheFakeOnlyInFakeMode(t *testing.T) {
 	}
 
 	realMode := smokeOverrides(forumReal, pgDSN, "")
-	for _, key := range append(requiredRealKeys, "PANEL_GROUP_IDS", "FOXHOLE_GROUP_ID") {
+	for _, key := range append(requiredRealKeys, "PANEL_GROUP_IDS") {
 		if _, set := realMode[key]; set {
 			t.Errorf("real mode overrides %s; the env file's value must stand", key)
 		}

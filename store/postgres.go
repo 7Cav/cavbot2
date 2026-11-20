@@ -684,6 +684,79 @@ func setAORoles(ctx context.Context, tx *sql.Tx, guildID string, roles AORoles) 
 	return nil
 }
 
+// GetForumGroups implements Store. No row is the default Foxhole group and
+// no Joiners groups at version 0.
+func (p *Postgres) GetForumGroups(ctx context.Context, guildID string) (ForumGroups, error) {
+	var (
+		raw []byte
+		out ForumGroups
+	)
+	err := p.db.QueryRowContext(ctx,
+		`SELECT foxhole_group_id, joiners_group_ids, version FROM forum_groups WHERE guild_id = $1`,
+		guildID).Scan(&out.FoxholeGroupID, &raw, &out.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ForumGroups{FoxholeGroupID: defaultFoxholeGroupID, JoinersGroupIDs: []int{}}, nil
+	}
+	if err != nil {
+		return ForumGroups{}, fmt.Errorf("get forum groups of guild %q: %w", guildID, err)
+	}
+	if err := json.Unmarshal(raw, &out.JoinersGroupIDs); err != nil {
+		return ForumGroups{}, fmt.Errorf("decode forum groups of guild %q: %w", guildID, err)
+	}
+	if out.JoinersGroupIDs == nil {
+		out.JoinersGroupIDs = []int{}
+	}
+	return out, nil
+}
+
+// SaveForumGroups implements Store.
+func (p *Postgres) SaveForumGroups(ctx context.Context, guildID string, groups ForumGroups, entry ChangeLogEntry) error {
+	_, err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		return 0, setForumGroups(ctx, tx, guildID, groups)
+	})
+	if err != nil {
+		return fmt.Errorf("save forum groups of guild %q: %w", guildID, err)
+	}
+	return nil
+}
+
+// setForumGroups writes the guild's forum groups row only while it is at
+// groups.Version, as setRecordingRoles does. Nothing written is ErrStale.
+func setForumGroups(ctx context.Context, tx *sql.Tx, guildID string, groups ForumGroups) error {
+	joiners := groups.JoinersGroupIDs
+	if joiners == nil {
+		joiners = []int{}
+	}
+	joinersJSON, err := json.Marshal(joiners)
+	if err != nil {
+		return err
+	}
+	var res sql.Result
+	if groups.Version == 0 {
+		res, err = tx.ExecContext(ctx, `
+			INSERT INTO forum_groups (guild_id, foxhole_group_id, joiners_group_ids, version)
+			VALUES ($1, $2, $3, 1)
+			ON CONFLICT (guild_id) DO NOTHING`,
+			guildID, groups.FoxholeGroupID, joinersJSON)
+	} else {
+		res, err = tx.ExecContext(ctx, `
+			UPDATE forum_groups SET foxhole_group_id = $2, joiners_group_ids = $3, version = version + 1
+			WHERE guild_id = $1 AND version = $4`,
+			guildID, groups.FoxholeGroupID, joinersJSON, groups.Version)
+	}
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStale
+	}
+	return nil
+}
+
 // GetRankRoles implements Store. No row is no roles at version 0, not an
 // error, since no panel admin has saved the rank roles.
 func (p *Postgres) GetRankRoles(ctx context.Context, guildID string) (RankRoles, error) {
@@ -841,6 +914,18 @@ func (p *Postgres) ListAORoleChanges(ctx context.Context, limit int) ([]ChangeLo
 		string(ChangeAORoles), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list AO roles changes: %w", err)
+	}
+	return entries, nil
+}
+
+// ListForumGroupChanges implements Store.
+func (p *Postgres) ListForumGroupChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	entries, err := queryAll(ctx, p.db, scanChangeLogEntry,
+		`SELECT id, hub_id, forum_user_id, forum_username, at, action, diff
+		 FROM change_log WHERE hub_id IS NULL AND action = $1 ORDER BY id DESC LIMIT $2`,
+		string(ChangeForumGroups), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list forum groups changes: %w", err)
 	}
 	return entries, nil
 }

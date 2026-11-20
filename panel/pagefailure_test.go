@@ -169,6 +169,20 @@ func (s *ctxStore) ListAORoleChanges(ctx context.Context, limit int) ([]store.Ch
 	return s.Fake.ListAORoleChanges(ctx, limit)
 }
 
+func (s *ctxStore) GetForumGroups(ctx context.Context, guildID string) (store.ForumGroups, error) {
+	if err := s.gate(ctx, "GetForumGroups"); err != nil {
+		return store.ForumGroups{}, err
+	}
+	return s.Fake.GetForumGroups(ctx, guildID)
+}
+
+func (s *ctxStore) ListForumGroupChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	if err := s.gate(ctx, "ListForumGroupChanges"); err != nil {
+		return nil, err
+	}
+	return s.Fake.ListForumGroupChanges(ctx, limit)
+}
+
 func (s *ctxStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	if err := s.gate(ctx, "ListFoxholeRecords"); err != nil {
 		return nil, err

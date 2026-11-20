@@ -505,7 +505,7 @@ func savedAddress(form string, version, hubID int64) string {
 // other value names none.
 func savedFromQuery(raw string) string {
 	switch raw {
-	case formModerators, formRecordingRoles, formAORoles, formRankRoles, formEdit:
+	case formModerators, formRecordingRoles, formAORoles, formForumGroups, formRankRoles, formEdit:
 		return raw
 	}
 	return ""
@@ -566,6 +566,9 @@ type pageRequest struct {
 	// AORoles is the AO roles section's form as posted back after a
 	// refusal. Nil shows the stored set.
 	AORoles *aoRolesInput
+	// ForumGroups is the forum groups section's form as posted back after a
+	// refusal. Nil shows the stored groups.
+	ForumGroups *forumGroupsInput
 	// RankRoles is the Settings page's Rank roles form as posted back after
 	// a refusal or with its preview. Nil shows the stored ladder.
 	RankRoles *rankRolesInput

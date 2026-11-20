@@ -209,7 +209,8 @@ Internal, such as D/ACD. Not every unit is one.
 
 **Foxhole group**:
 The one forum group whose members are Foxhole managers. Who is in it is
-decided on the forum.
+decided on the forum. A panel admin sets which group it is on the Settings
+page. Until one does, it is 323.
 _Avoid_: warden group, warden allowlist.
 
 **Foxhole manager**:
@@ -535,10 +536,10 @@ what changed. Every save that takes effect has one entry, holding the old
 and new values, except a recording's deletion. Every Foxhole action started
 on the Foxhole page has one too, its report. Each hub's form shows the hub's
 own entries, and each removed hub's row on the Hubs page shows that hub's,
-its removal included. The guild-wide moderator section, the rank roles
-section and the recording roles section each show the entries of their own
-saves, which reference no hub, and the Foxhole page shows its own. A change
-made by a command or by hand in Discord has none.
+its removal included. The guild-wide moderator section and each section of
+the Settings page show the entries of their own saves, which reference no
+hub, and the Foxhole page shows its own. A change made by a command or by
+hand in Discord has none.
 _Avoid_: audit trail, audit log (that is Discord's), history.
 
 **Stale form**:
@@ -573,7 +574,9 @@ The panel's test of the signed-in forum user's forum groups, primary or
 secondary, on every request. The groups decide what the panel session can
 see. They never end it. One of the panel's admin groups makes them a panel
 admin. The Foxhole group makes them a Foxhole manager. A Joiners group lets
-them open the Joiners page. An outsider opens the Recordings page alone.
+them open the Joiners page. An outsider opens the Recordings page alone. The
+admin groups come from the bot's configuration, and the Foxhole group and the
+Joiners groups from the Settings page.
 _Avoid_: allowlist check, permission check, authorisation, role check.
 
 **Panel admin**:
@@ -597,7 +600,8 @@ _Avoid_: forbidden page, access denied page, 403 page.
 
 **Settings page**:
 The panel page where a panel admin sets the guild-wide settings that belong
-to no hub: the rank roles, the recording roles and the AO roles.
+to no hub: the rank roles, the recording roles, the AO roles, the Foxhole
+group and the Joiners groups.
 _Avoid_: admin page, config page, preferences.
 
 **Rail**:
@@ -780,7 +784,8 @@ _Avoid_: join report, recruitment dashboard.
 
 **Joiners group**:
 A forum group whose members open the Joiners page, such as an AO's leaders.
-Who is in it is decided on the forum. A panel admin opens the page too.
+Who is in it is decided on the forum. A panel admin sets the Joiners groups
+on the Settings page, and opens the page too.
 _Avoid_: recruiter group, AO leader group.
 
 ## External systems

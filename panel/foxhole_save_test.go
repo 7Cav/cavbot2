@@ -11,7 +11,8 @@ import (
 )
 
 // firstCallStall is a hookedStore hook that, once armed, stalls the first
-// store call made, whichever method it is, as stallingStore stalls SaveHub.
+// store call made after the group check's, whichever method it is, as
+// stallingStore stalls SaveHub.
 // The call goes through once its context is done, and the store fake
 // answers a done context with the context's error. A call made with no
 // deadline fails the test after stallLimit and goes through as made. It
@@ -20,11 +21,15 @@ import (
 type firstCallStall struct {
 	t     *testing.T
 	clock *testClock
-	armed atomic.Bool
+	// calls counts down the calls to the one it stalls, at 0.
+	calls atomic.Int32
 }
 
+// arm makes the first call after the group check's the stalled one.
+func (s *firstCallStall) arm() { s.calls.Store(groupCheckReads + 1) }
+
 func (s *firstCallStall) hook(ctx context.Context) {
-	if s.armed.CompareAndSwap(true, false) && !stallUntilDone(ctx, s.clock) {
+	if s.calls.Add(-1) == 0 && !stallUntilDone(ctx, s.clock) {
 		s.t.Errorf("the stalled store call reached no deadline in %v", stallLimit)
 	}
 }
@@ -82,7 +87,7 @@ func TestFoxholeSaveStoreCallPastItsDeadlineFailsTheSave(t *testing.T) {
 			w := newFoxholeWorldWith(t, func(st store.Store) store.Store { return hookedStore{st: st, hook: stall.hook} })
 			save := tc.open(t, w)
 			rec := recordSentry(t)
-			stall.armed.Store(true)
+			stall.arm()
 
 			res := save()
 

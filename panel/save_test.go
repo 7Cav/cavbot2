@@ -31,16 +31,27 @@ import (
 type departure struct {
 	mu     sync.Mutex
 	cancel context.CancelFunc
+	// skip is how many calls of leave while armed pass before one cancels.
+	skip int
 	// left is whether the request's context was cancelled while it ran.
 	left bool
 }
 
+// groupCheckReads is how many store calls the group check makes on a
+// request before its handler runs: the read of the forum groups.
+const groupCheckReads = 1
+
 func (d *departure) leave() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.cancel != nil {
-		d.cancel()
+	if d.cancel == nil {
+		return
 	}
+	if d.skip > 0 {
+		d.skip--
+		return
+	}
+	d.cancel()
 }
 
 func (d *departure) arm(cancel context.CancelFunc) {
@@ -245,6 +256,21 @@ func (s hookedStore) SaveAORoles(ctx context.Context, guildID string, roles stor
 func (s hookedStore) ListAORoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
 	s.hook(ctx)
 	return s.st.ListAORoleChanges(ctx, limit)
+}
+
+func (s hookedStore) GetForumGroups(ctx context.Context, guildID string) (store.ForumGroups, error) {
+	s.hook(ctx)
+	return s.st.GetForumGroups(ctx, guildID)
+}
+
+func (s hookedStore) SaveForumGroups(ctx context.Context, guildID string, groups store.ForumGroups, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
+	return s.st.SaveForumGroups(ctx, guildID, groups, entry)
+}
+
+func (s hookedStore) ListForumGroupChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
+	return s.st.ListForumGroupChanges(ctx, limit)
 }
 
 func (s hookedStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
@@ -469,6 +495,19 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 			},
 			action: store.ChangeAORoles,
 		},
+		{
+			name:    "forum groups",
+			landsOn: settingsPath,
+			path:    func(*testing.T, store.Store) string { return "/forum-groups" },
+			form:    func(t *testing.T, st store.Store) url.Values { return forumGroupsForm(t, st, "400", "410") },
+			checkSaved: func(t *testing.T, st store.Store) int64 {
+				if got := storedForumGroups(t, st); got.FoxholeGroupID != 400 || !slices.Equal(got.JoinersGroupIDs, []int{410}) {
+					t.Errorf("stored forum groups = %+v, want the Foxhole group 400 and the Joiners group 410", got)
+				}
+				return 0
+			},
+			action: store.ChangeForumGroups,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -478,7 +517,7 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 					t.Fatalf("UpsertHub: %v", err)
 				}
 			}
-			d := &departure{}
+			d := &departure{skip: groupCheckReads}
 			w := newTestWorldOver(t, hookedStore{st: fake, hook: func(context.Context) { d.leave() }}, newFakeForum(t))
 			signIn(t, w.forum, w.b)
 
@@ -709,6 +748,7 @@ type savedState struct {
 	Roles     store.GuildModeratorRoles
 	Recording store.RecordingRoles
 	AO        store.AORoles
+	Forum     store.ForumGroups
 	Ranks     store.RankRoles
 	Entries   map[int64][]store.ChangeLogEntry
 }
@@ -722,7 +762,7 @@ func readSavedState(t *testing.T, st store.Store) savedState {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st), AO: storedAORoles(t, st), Ranks: storedRankRoles(t, st),
+	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st), AO: storedAORoles(t, st), Forum: storedForumGroups(t, st), Ranks: storedRankRoles(t, st),
 		Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
 	for _, h := range hubs {
 		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)

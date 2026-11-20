@@ -92,6 +92,10 @@ check needs:
 | Foxhole manager | The Foxhole page |
 | Outsider | The Recordings page |
 
+`up` saves the Foxhole group as 323, the Foxhole manager's group, and no
+Joiners groups, so a Forum groups save from an earlier run doesn't change
+where the personas land.
+
 Sign out from the rail to switch persona. `go run ./tools/smoke forum
 expired`, `refused` or `down` makes the forum answer the next group check with
 a 401, a 403 or nothing, which brings up the session-ended, refused and
@@ -272,7 +276,7 @@ removes the label too.
 | `up` says | Fix |
 |-----------|-----|
 | Port 8080 or 8091 is in use | Stop the process it names, usually a bot started outside the tool |
-| The bot exited with `Bot store unavailable`, naming a migration | Another branch migrated the smoke database. Run `up --fresh-db` |
+| The bot exited with `Bot store unavailable`, or `up` could not seed the personas' forum groups, naming a migration | Another branch migrated the smoke database. Run `up --fresh-db` |
 | The forum says the redirect URI is not valid, with `--forum real` | Ask the person to register `http://localhost:8080/auth/callback` on the forum client |
 | Any other exit during startup | Use the README's troubleshooting table |
 
