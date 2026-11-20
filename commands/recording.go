@@ -96,8 +96,9 @@ var (
 	// errRecorderComingBack: the start took an offline recorder, which
 	// didn't log back in within the join's deadline.
 	errRecorderComingBack = errors.New("recording: the recorder is still logging back in")
-	// errRecorderNotLetIn: Discord refused the overwrite that lets the
-	// recorder into the channel.
+	// errRecorderNotLetIn: the overwrite that lets the recorder into the
+	// channel could not be set, because Discord refused it or the channel
+	// is missing from the cache.
 	errRecorderNotLetIn = errors.New("recording: the recorder could not be let into the channel")
 )
 
@@ -237,11 +238,12 @@ type RecordingRuntime struct {
 	mu sync.Mutex
 	// running maps each busy recorder's user ID to its recording.
 	running map[string]*activeRecording
-	// letIn holds each recorder and channel the runtime gave an overwrite,
-	// until the recorder's leave there removes it. A recorder a cut short
-	// freed can start in another channel before that leave runs, so the
-	// channel is part of the key.
-	letIn map[recorderInChannel]bool
+	// letIn holds each recorder and channel whose overwrite the runtime set,
+	// until the last leave there undoes it. A recorder a cut short freed can
+	// start again before that leave runs: in another channel, so the
+	// channel is part of the key, or in the same one, so a grant counts its
+	// holders.
+	letIn map[recorderInChannel]*recorderGrant
 
 	// recordCommandID is /record's ID, empty until the startup sync has
 	// registered the commands.
@@ -307,7 +309,7 @@ func NewRecordingRuntime(mgr RecordingManager, st store.Store, tv *TempVC, guild
 		panelURL:  panelURL,
 		builtAt:   recordingNow(),
 		running:   make(map[string]*activeRecording),
-		letIn:     make(map[recorderInChannel]bool),
+		letIn:     make(map[recorderInChannel]*recorderGrant),
 	}
 	recordingAfterFunc(0, r.sweepRetention)
 	recordingAfterFunc(0, r.recoverWhenListed)
@@ -698,18 +700,42 @@ func (r *RecordingRuntime) reserveLocked(recorderID, channelID, starterID string
 // channel it is about to record, which its roles may not reach. Discord
 // ignores a join to a channel the recorder can't see, so without it the
 // join would wait out its deadline (#958). An overwrite the recorder has
-// there already is left as it is.
+// there already that allows both and denies neither is left as it is. Any
+// other gains recorderAccess for the recording, and the rest of it stays.
+// With the channel missing from the cache it fails, rather than replace an
+// overwrite it can't see.
 func (r *RecordingRuntime) letRecorderIn(recorderID, channelID string) error {
-	if ch, err := r.mgr.Channel(channelID); err == nil && slices.ContainsFunc(ch.PermissionOverwrites, func(o *discordgo.PermissionOverwrite) bool {
-		return o.ID == recorderID && o.Type == discordgo.PermissionOverwriteTypeMember
-	}) {
+	key := recorderInChannel{recorderID, channelID}
+	r.mu.Lock()
+	if g, ok := r.letIn[key]; ok {
+		g.holds++
+		r.mu.Unlock()
 		return nil
 	}
-	if err := r.mgr.ChannelPermissionSet(channelID, recorderID, discordgo.PermissionOverwriteTypeMember, recorderAccess, 0, recorderLetInReason); err != nil {
+	r.mu.Unlock()
+	ch, err := r.mgr.Channel(channelID)
+	if err != nil {
+		return err
+	}
+	var prior *discordgo.PermissionOverwrite
+	if i := slices.IndexFunc(ch.PermissionOverwrites, func(o *discordgo.PermissionOverwrite) bool {
+		return o.ID == recorderID && o.Type == discordgo.PermissionOverwriteTypeMember
+	}); i >= 0 {
+		o := *ch.PermissionOverwrites[i]
+		if o.Allow&recorderAccess == recorderAccess && o.Deny&recorderAccess == 0 {
+			return nil
+		}
+		prior = &o
+	}
+	allow, deny := int64(recorderAccess), int64(0)
+	if prior != nil {
+		allow, deny = prior.Allow|recorderAccess, prior.Deny&^recorderAccess
+	}
+	if err := r.mgr.ChannelPermissionSet(channelID, recorderID, discordgo.PermissionOverwriteTypeMember, allow, deny, recorderLetInReason); err != nil {
 		return err
 	}
 	r.mu.Lock()
-	r.letIn[recorderInChannel{recorderID, channelID}] = true
+	r.letIn[key] = &recorderGrant{prior: prior, holds: 1}
 	r.mu.Unlock()
 	return nil
 }
@@ -717,20 +743,41 @@ func (r *RecordingRuntime) letRecorderIn(recorderID, channelID string) error {
 // recorderInChannel is a recorder and a channel it was let into.
 type recorderInChannel struct{ recorderID, channelID string }
 
-// letRecorderOut removes the overwrite letRecorderIn gave a recorder on a
-// channel, if it gave one. One that won't go is a WARN line: it lets a
-// recorder in, which harms nothing.
+// recorderGrant is an overwrite letRecorderIn set: the one it replaced, nil
+// when there was none, and how many recordings still need it.
+type recorderGrant struct {
+	prior *discordgo.PermissionOverwrite
+	holds int
+}
+
+// letRecorderOut undoes what letRecorderIn set on a channel once the last
+// recording that needs it lets go: it deletes the overwrite it added, or
+// puts back the one it changed. One that won't undo is a WARN line: it
+// leaves the recorder able to join, which harms nothing.
 func (r *RecordingRuntime) letRecorderOut(recorderID, channelID string) {
 	key := recorderInChannel{recorderID, channelID}
 	r.mu.Lock()
-	ok := r.letIn[key]
-	delete(r.letIn, key)
+	g, ok := r.letIn[key]
+	if ok {
+		g.holds--
+		ok = g.holds == 0
+	}
+	if ok {
+		delete(r.letIn, key)
+	}
 	r.mu.Unlock()
 	if !ok {
 		return
 	}
-	if err := r.mgr.ChannelPermissionDelete(channelID, recorderID, recorderLetOutReason); err != nil {
-		utils.Warn("Recorder overwrite not removed", "recorder", recorderID, "channel_id", channelID, "error", err)
+	prior := g.prior
+	var err error
+	if prior == nil {
+		err = r.mgr.ChannelPermissionDelete(channelID, recorderID, recorderLetOutReason)
+	} else {
+		err = r.mgr.ChannelPermissionSet(channelID, recorderID, discordgo.PermissionOverwriteTypeMember, prior.Allow, prior.Deny, recorderLetOutReason)
+	}
+	if err != nil {
+		utils.Warn("Recorder overwrite not undone", "recorder", recorderID, "channel_id", channelID, "error", err)
 	}
 }
 

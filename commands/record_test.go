@@ -550,8 +550,8 @@ func TestRecordStartJoinsARecorderAndWritesItsRow(t *testing.T) {
 
 // A recorder can join the channel it records for as long as the recording
 // runs, even in a channel its roles don't reach, and the channel's
-// overwrites are as they were once it stops (#958). An overwrite the
-// recorder already had there stays as it was.
+// overwrites are as they were once it stops (#958), an overwrite the
+// recorder already had there included.
 func TestRecordLetsTheRecorderIntoItsChannelForTheRecording(t *testing.T) {
 	recorder := permMember{id: testRecorder}
 	for _, tc := range []struct {
@@ -561,6 +561,10 @@ func TestRecordLetsTheRecorderIntoItsChannelForTheRecording(t *testing.T) {
 		{"channel the recorder can't see", permCategoryOverwrites()},
 		{"recorder already let in by an admin", append(permCategoryOverwrites(),
 			&discordgo.PermissionOverwrite{ID: testRecorder, Type: discordgo.PermissionOverwriteTypeMember, Allow: permJoin | discordgo.PermissionSendMessages})},
+		{"recorder kept out by its own overwrite", append(permCategoryOverwrites(),
+			&discordgo.PermissionOverwrite{ID: testRecorder, Type: discordgo.PermissionOverwriteTypeMember, Allow: discordgo.PermissionVoiceSpeak, Deny: discordgo.PermissionVoiceConnect})},
+		{"recorder's own overwrite allows neither", append(permCategoryOverwrites(),
+			&discordgo.PermissionOverwrite{ID: testRecorder, Type: discordgo.PermissionOverwriteTypeMember, Allow: discordgo.PermissionVoiceSpeak})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := newRecordScene(t, testRecorder)
@@ -695,6 +699,16 @@ var recordRefusals = []recordRefusal{
 		recorders: []string{testRecorder},
 		setup: func(_ *testing.T, sc *recordScene) permMember {
 			sc.fake.permissionSetErr = restError(http.StatusForbidden, discordgo.ErrCodeMissingPermissions, rawBodyMarker)
+			sc.fake.setVoice(recStarter.id, recordChannel)
+			return recStarter
+		},
+		carries: []string{recorderNotLetInRefusal},
+	},
+	{
+		name:      "channel missing from the cache",
+		recorders: []string{testRecorder},
+		setup: func(_ *testing.T, sc *recordScene) permMember {
+			sc.fake.channelErr = discordgo.ErrStateNotFound
 			sc.fake.setVoice(recStarter.id, recordChannel)
 			return recStarter
 		},
