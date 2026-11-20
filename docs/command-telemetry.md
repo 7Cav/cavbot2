@@ -123,9 +123,8 @@ Two consequences worth knowing when adding a capture site:
   pass it separately as `"subcommand"` — that is why `/foxhole`'s captures no
   longer put its subcommand under `command`.
 - Some capture sites still carry no `command` at all — the direct
-  `utils.CaptureError` calls in `afsm.go`, `s6_trackers.go`, `awol.go` and
-  `star_citizen_joiners.go`. Their events simply go untagged rather than
-  wrongly tagged. Adding the key at those sites would widen tag coverage and
+  `utils.CaptureError` calls in `afsm.go`, `s6_trackers.go` and `awol.go`.
+  Their events simply go untagged rather than wrongly tagged. Adding the key at those sites would widen tag coverage and
   is worth doing, but it was left out of the telemetry change.
 
 ### Correction to ADR 0011: these names are *not* drop-in portable

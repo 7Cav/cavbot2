@@ -11,11 +11,9 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// syncBuffer is a concurrency-safe sink for the package-wide test logger. The
-// mutex is load-bearing: TestRunJoinerReportSchedulerLoop_PanicIsRecovered
-// deliberately leaves its scheduler goroutine running past the end of the test
-// (see the comment there), and that goroutine keeps calling utils.Info, so the
-// sink has a live writer no test controls.
+// syncBuffer is a concurrency-safe sink for the package-wide test logger. Code
+// under test logs from goroutines it starts, such as timers and concurrent
+// interactions, while the test reads or resets the sink.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -48,11 +46,10 @@ var testLogs = &syncBuffer{}
 // nil *slog.Logger when they call utils.Info/Warn/Debug.
 //
 // This is the ONLY assignment to utils.Logger in the package, and it must stay
-// that way. utils.Logger is an unsynchronized package global; the leaked
-// scheduler goroutine described on syncBuffer reads it for the rest of the
-// run, so a later write — even the restore half of a swap-and-restore helper —
-// is a data race that -race will fail the build on. Assigning once here, before
-// m.Run starts anything, happens-before every read.
+// that way. utils.Logger is an unsynchronized package global, and goroutines
+// started by code under test read it. A later write, even the restore half of
+// a swap-and-restore helper, races any of them still running and fails -race.
+// Assigning once here, before m.Run starts anything, happens-before every read.
 //
 // Level is INFO because that is the most verbose level any assertion needs
 // (the telemetry line is INFO, the s3aar enrichment warnings are WARN).

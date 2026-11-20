@@ -291,7 +291,7 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 /* The guild-wide moderator section, the rank roles section and the
    recording roles section: each form beside its change log. A rank roles
    preview spans both columns above them. */
-.moderators, .rank-roles, .recording-roles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
+.moderators, .rank-roles, .recording-roles, .ao-roles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
 .rank-roles > .block--danger { grid-column: 1 / -1; }
 
 /* The change log under a hub's form. Each entry is a <details> folded to
@@ -526,8 +526,18 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 .mx-funnel .mx-bar { width: 100%; }
 .mx-funnel rect { fill: var(--gold); }
 .mx-note { font-size: 13px; color: var(--text-mute); }
+/* The Joiners page (#231) reuses the Metrics page's tables, spark and
+   funnel. The selected AO's row steps up to Raised Charcoal with a gold
+   edge, as the selected rail item does. */
+.jn-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
+.jn-head { display: flex; flex-wrap: wrap; align-items: center; }
+.jn-nav { display: flex; gap: 6px; margin-left: auto; }
+.jn-nav .btn { min-width: 26px; }
+.jn-user { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--text-mute); }
+.mx-table tr.is-selected { background: var(--surface-3); }
+.mx-table tr.is-selected th { box-shadow: inset 3px 0 0 var(--gold); font-weight: 500; }
 @media (max-width: 1100px) {
-  .mx-grid { grid-template-columns: minmax(0, 1fr); }
+  .mx-grid, .jn-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 767px) {
   .mx-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -569,7 +579,7 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
    logo on one row. */
 @media (max-width: 767px) {
   .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
-  .moderators, .recording-roles { grid-template-columns: minmax(0, 1fr); }
+  .moderators, .recording-roles, .ao-roles { grid-template-columns: minmax(0, 1fr); }
   .rail {
     position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line);
     display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;

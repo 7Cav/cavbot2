@@ -453,12 +453,18 @@ func (b *builder) heat(from time.Time) Heatmap {
 	return grid
 }
 
-func (b *builder) cohort() Cohort {
+// cohortJoiners are the users who first joined in W-7 to W-4, and whether
+// that window is known.
+func (b *builder) cohortJoiners() ([]joiner, bool) {
 	from := b.at(-7)
-	if !b.known(from, b.live) {
+	return b.joiners(from, b.at(-3)), b.known(from, b.live)
+}
+
+func (b *builder) cohort() Cohort {
+	js, ok := b.cohortJoiners()
+	if !ok {
 		return Cohort{}
 	}
-	js := b.joiners(from, b.at(-3))
 	c := Cohort{Known: true, Joined: len(js)}
 	for _, j := range js {
 		if b.left(j) {

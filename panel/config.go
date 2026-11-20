@@ -33,6 +33,10 @@ type Config struct {
 	// user is a Foxhole manager when the primary group or any secondary
 	// group is it.
 	FoxholeGroupID int
+	// JoinersGroupIDs are the Joiners groups the group check reads: a forum
+	// user in one, by primary group or any secondary group, opens the
+	// Joiners page. Empty means none.
+	JoinersGroupIDs []int
 }
 
 // Enabled reports whether the panel listens at all.
@@ -46,10 +50,11 @@ var defaultGroupIDs = []int{71, 47, 44}
 // Foxhole managers when FOXHOLE_GROUP_ID is unset or empty.
 const defaultFoxholeGroupID = 323
 
-// ConfigFromEnv reads the PANEL_* variables and FOXHOLE_GROUP_ID. With
-// PANEL_ADDR unset it returns a disabled config and no error, whatever the
-// other variables hold. With it set, every other variable but PANEL_GROUP_IDS
-// and FOXHOLE_GROUP_ID is required and the error names the first one
+// ConfigFromEnv reads the PANEL_* variables, FOXHOLE_GROUP_ID and
+// JOINERS_GROUP_IDS. With PANEL_ADDR unset it returns a disabled config and
+// no error, whatever the other variables hold. With it set, every other
+// variable but PANEL_GROUP_IDS, FOXHOLE_GROUP_ID and JOINERS_GROUP_IDS is
+// required and the error names the first one
 // missing, so a half-filled .env fails at startup instead of at the first
 // sign-in. A group ID that doesn't parse fails it too.
 func ConfigFromEnv() (Config, error) {
@@ -96,6 +101,13 @@ func ConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("FOXHOLE_GROUP_ID: %q is not a group ID", raw)
 		}
 		cfg.FoxholeGroupID = id
+	}
+	if raw := strings.TrimSpace(os.Getenv("JOINERS_GROUP_IDS")); raw != "" {
+		ids, err := parseGroupIDs(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("JOINERS_GROUP_IDS: %w", err)
+		}
+		cfg.JoinersGroupIDs = ids
 	}
 	return cfg, nil
 }

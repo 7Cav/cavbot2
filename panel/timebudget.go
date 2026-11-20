@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/7cav/cavbot2/store"
@@ -48,6 +49,22 @@ func timeStoreRead[T any](r *pageReads, name string, read func() (T, error)) (T,
 	v, err := read()
 	r.add(name, started)
 	return v, err
+}
+
+// storeReads runs a page's store reads in turn, each recorded in reads,
+// and skips the rest once one fails. err is the first failure, named.
+type storeReads struct {
+	reads *pageReads
+	err   error
+}
+
+func (s *storeReads) read(name string, f func() error) {
+	if s.err != nil {
+		return
+	}
+	if _, err := timeStoreRead(s.reads, name, func() (struct{}, error) { return struct{}{}, f() }); err != nil {
+		s.err = fmt.Errorf("%s: %w", name, err)
+	}
 }
 
 // budgetReport is the record as the Sentry event carries it, under
@@ -135,6 +152,18 @@ func (s pageStore) GetRecordingRoles(ctx context.Context, guildID string) (store
 func (s pageStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
 	return timeStoreRead(s.reads, recordingRoleChangesRead, func() ([]store.ChangeLogEntry, error) {
 		return s.Store.ListRecordingRoleChanges(ctx, limit)
+	})
+}
+
+func (s pageStore) GetAORoles(ctx context.Context, guildID string) (store.AORoles, error) {
+	return timeStoreRead(s.reads, aoRolesRead, func() (store.AORoles, error) {
+		return s.Store.GetAORoles(ctx, guildID)
+	})
+}
+
+func (s pageStore) ListAORoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	return timeStoreRead(s.reads, aoRoleChangesRead, func() ([]store.ChangeLogEntry, error) {
+		return s.Store.ListAORoleChanges(ctx, limit)
 	})
 }
 

@@ -4,6 +4,9 @@ status: accepted
 
 # Discord activity is kept in the bot store as IDs and times, and shown to panel admins as group totals
 
+**Amended 2026-11-20** (#972): the Joiners group sees cohort totals too. See
+*Amendment: the Joiners group sees cohort totals*.
+
 The Metrics page (#949) answers questions like "2-7 doesn't use Discord much"
 and "new members go quiet at this rate". To do that the bot records who sent a
 message, who was in voice and who joined or left, in its own Postgres. Each
@@ -32,3 +35,9 @@ section are kept with no limit, so long trends survive the pruning.
   arrive without it.
 - **Per-member views.** Rejected. The page is for group trends and must not
   feed requirements or promotions.
+
+## Amendment: the Joiners group sees cohort totals (2026-11-20)
+
+ADR 0022 shows the Joiners group the Joiners page's pipeline, which holds
+activity totals for a whole join cohort. Panel admins are no longer the only
+audience for those totals. They stay per cohort, never per member.

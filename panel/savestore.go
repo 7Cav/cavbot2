@@ -130,6 +130,24 @@ func (b boundedStore) ListRecordingRoleChanges(ctx context.Context, limit int) (
 	return b.store.ListRecordingRoleChanges(ctx, limit)
 }
 
+func (b boundedStore) GetAORoles(ctx context.Context, guildID string) (store.AORoles, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.GetAORoles(ctx, guildID)
+}
+
+func (b boundedStore) SaveAORoles(ctx context.Context, guildID string, roles store.AORoles, entry store.ChangeLogEntry) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.SaveAORoles(ctx, guildID, roles, entry)
+}
+
+func (b boundedStore) ListAORoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ListAORoleChanges(ctx, limit)
+}
+
 func (b boundedStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()

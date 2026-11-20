@@ -263,9 +263,9 @@ rank role or holds the Discharged role, "not in the server", and
 _Avoid_: warning, alert, issue.
 
 **Member list**:
-The bot's copy of every member of the guild, which the holder list is read
-from, partial after each connect until Discord's last part arrives. A
-resumed session keeps it.
+The bot's copy of every member of the guild, which the holder list and the
+Joiners page are read from, partial after each connect until Discord's last
+part arrives. A resumed session keeps it.
 _Avoid_: member cache, roster (a unit's roster is a different list).
 
 **Foxhole action**:
@@ -572,8 +572,8 @@ _Avoid_: auth request, login attempt, OAuth state, flow.
 The panel's test of the signed-in forum user's forum groups, primary or
 secondary, on every request. The groups decide what the panel session can
 see. They never end it. One of the panel's admin groups makes them a panel
-admin. The Foxhole group makes them a Foxhole manager. An outsider opens the
-Recordings page alone.
+admin. The Foxhole group makes them a Foxhole manager. A Joiners group lets
+them open the Joiners page. An outsider opens the Recordings page alone.
 _Avoid_: allowlist check, permission check, authorisation, role check.
 
 **Panel admin**:
@@ -584,8 +584,9 @@ channel's), Foxhole manager (a narrower role).
 
 **Outsider**:
 A signed-in forum user the group check finds in none of the panel's groups,
-neither a panel admin nor a Foxhole manager. Opens the Recordings page, which
-lists the recordings they started, or says they have none yet.
+neither a panel admin, a Foxhole manager nor in a Joiners group. Opens the
+Recordings page, which lists the recordings they started, or says they have
+none yet.
 _Avoid_: user outside the admin groups (a Foxhole manager is one too), user
 in neither group, user in no group, guest, unprivileged user.
 
@@ -596,7 +597,7 @@ _Avoid_: forbidden page, access denied page, 403 page.
 
 **Settings page**:
 The panel page where a panel admin sets the guild-wide settings that belong
-to no hub: the rank roles and the recording roles.
+to no hub: the rank roles, the recording roles and the AO roles.
 _Avoid_: admin page, config page, preferences.
 
 **Rail**:
@@ -752,6 +753,36 @@ The latest complete Monday to Sunday week in Zulu, the week the Metrics page
 reports on.
 _Avoid_: current week (the one still running).
 
+## Joiners
+
+New members of the Discord server, named to the people who welcome them
+(ADR 0022).
+
+**AO**:
+One of the regiment's games. The Joiners page names it by its AO role's
+Discord name.
+
+**AO role**:
+The Discord role that marks a member as playing an AO, set by a panel admin
+on the Settings page. A member can hold several.
+_Avoid_: game role.
+
+**Joiner**:
+A member of the Discord server who joined in the week being read. A member
+who takes up a new AO is not a joiner.
+_Avoid_: recruit (a joiner may never enlist).
+
+**Joiners page**:
+The panel page that shows, for one week, how many joiners each AO got, each
+AO's joiners by name with their join times, and the pipeline in group
+totals. It shows no activity per member.
+_Avoid_: join report, recruitment dashboard.
+
+**Joiners group**:
+A forum group whose members open the Joiners page, such as an AO's leaders.
+Who is in it is decided on the forum. A panel admin opens the page too.
+_Avoid_: recruiter group, AO leader group.
+
 ## External systems
 
 **7Cav API**:
@@ -793,9 +824,11 @@ wait for Discord to send the bot the guild's data or the member list,
 starting when the page begins reading. A load still reading when it runs out
 fails at once, whatever read it is waiting on, and the page says it took too
 long. A load still waiting on Discord fails at once too, and the page says
-Discord has not sent the data. The Foxhole page is the exception. It shows
-everything that doesn't need the member list, with a notice in place of the
-rest. Downloading a recording's mix or zip has no time budget.
+Discord has not sent the data. The Foxhole and Joiners pages are the
+exception. They show a notice in place of whatever needs the member list.
+The Foxhole page shows the rest. Every block on the Joiners page needs the
+list, so there the notice replaces the whole report. Downloading a
+recording's mix or zip has no time budget.
 _Avoid_: page timeout, deadline.
 
 **Failed start**:

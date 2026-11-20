@@ -89,8 +89,8 @@ func (p *Panel) groupCheck(ctx context.Context, accessToken string) (forumUser, 
 	return envelope.Me, checkPassed, nil
 }
 
-// access is what one group check lets a session open. A user can be both a
-// panel admin and a Foxhole manager.
+// access is what one group check lets a session open. A user can be in any
+// mix of the roles below.
 type access struct {
 	// panelAdmin is the primary group or any secondary group being one of
 	// the panel's admin groups. A panel admin opens every page.
@@ -98,26 +98,35 @@ type access struct {
 	// foxholeManager is the primary group or any secondary group being the
 	// Foxhole group.
 	foxholeManager bool
+	// joinersViewer is the primary group or any secondary group being one
+	// of the Joiners groups.
+	joinersViewer bool
 }
 
 // foxholePage reports whether the session opens the Foxhole page: panel
 // admins and Foxhole managers do.
 func (a access) foxholePage() bool { return a.panelAdmin || a.foxholeManager }
 
+// joinersPage reports whether the session opens the Joiners page: panel
+// admins and Joiners viewers do.
+func (a access) joinersPage() bool { return a.panelAdmin || a.joinersViewer }
+
 // outsider reports whether the session is an outsider's: neither a panel
-// admin nor a Foxhole manager.
-func (a access) outsider() bool { return !a.panelAdmin && !a.foxholeManager }
+// admin, a Foxhole manager nor a Joiners viewer.
+func (a access) outsider() bool { return !a.panelAdmin && !a.foxholeManager && !a.joinersViewer }
 
 // landing is the address of the page the session lands on at sign-in: the
 // hub page for a panel admin, else the Foxhole page for a Foxhole manager,
-// else the Recordings page, which lists the recordings the user started or
-// says they have none yet.
+// else the Joiners page for a Joiners viewer, else the Recordings page,
+// which lists the recordings the user started or says they have none yet.
 func (a access) landing() string {
 	switch {
 	case a.panelAdmin:
 		return "/"
 	case a.foxholePage():
 		return foxholePath
+	case a.joinersPage():
+		return joinersPath
 	}
 	return recordingsPath
 }
@@ -130,6 +139,8 @@ func (a access) landingLabel() string {
 		return "Go to Hubs"
 	case a.foxholePage():
 		return "Go to Foxhole"
+	case a.joinersPage():
+		return "Go to Joiners"
 	}
 	return "Go to Recordings"
 }
@@ -140,6 +151,7 @@ func (p *Panel) accessOf(u forumUser) access {
 	return access{
 		panelAdmin:     inGroups(u, p.cfg.AdminGroupIDs...),
 		foxholeManager: inGroups(u, p.cfg.FoxholeGroupID),
+		joinersViewer:  inGroups(u, p.cfg.JoinersGroupIDs...),
 	}
 }
 

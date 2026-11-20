@@ -439,8 +439,6 @@ func main() {
 		utils.Info("Commands registered", "count", len(registry.GetCommands()))
 	}
 
-	commands.StartJoinerReportScheduler(dg, GuildID)
-
 	start.MarkRunning()
 	utils.Info("Bot is now running. Press CTRL-C to exit")
 	<-ctx.Done()

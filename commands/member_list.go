@@ -138,6 +138,7 @@ type ListedMember struct {
 	AvatarURL string
 	JoinedAt  time.Time
 	RoleIDs   []string
+	Bot       bool
 }
 
 // DisplayName is the name a member shows in the server: their server
@@ -509,6 +510,7 @@ func (l *memberList) snapshot(guildID string) MemberListSnapshot {
 			AvatarURL:  withGuild.AvatarURL(""),
 			JoinedAt:   member.JoinedAt,
 			RoleIDs:    append([]string(nil), member.Roles...),
+			Bot:        member.User.Bot,
 		})
 	}
 	return snap

@@ -737,8 +737,8 @@ func assertRecordingsPageEmpty(t *testing.T, doc *html.Node, want string) {
 // A forum user who started no recording signs in while someone else's
 // recording is held, and opens the Recordings page. Each gets it, saying
 // they have none yet. An outsider's also says their forum groups open no
-// other page. A panel admin's and a Foxhole manager's say nothing about
-// their groups, since theirs open other pages.
+// other page. A panel admin's, a Foxhole manager's and a Joiners viewer's
+// say nothing about their groups, since theirs open other pages.
 func TestRecordingsPageOfSomeoneWithNoRecordings(t *testing.T) {
 	cases := []struct {
 		who      string
@@ -747,6 +747,7 @@ func TestRecordingsPageOfSomeoneWithNoRecordings(t *testing.T) {
 	}{
 		{"an outsider", addOutsider, true},
 		{"a Foxhole manager", addFoxholeManager, false},
+		{"a Joiners viewer", addJoinersViewer, false},
 		{"a panel admin", func(f *fakeForum) *forumAccount { return f.addUser(1357, "Admin.A", 2, []int{47}) }, false},
 	}
 	for _, tc := range cases {

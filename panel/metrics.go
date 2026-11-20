@@ -23,6 +23,13 @@ import (
 
 const metricsPath = "/metrics"
 
+// The names of the metrics reads the Joiners page makes too.
+const (
+	metricsStateRead = "read metrics state"
+	activeDaysRead   = "read active days"
+	memberEventsRead = "read member events"
+)
+
 // MetricsReader is what the Metrics page reads (*store.Postgres).
 type MetricsReader interface {
 	MetricsState(ctx context.Context) (metrics.State, error)
@@ -71,23 +78,15 @@ func (s *hubService) metricsReport(ctx context.Context, reads *pageReads, now ti
 	}
 	m, rg := s.deps.Metrics, metrics.ReadRanges(now)
 	in := metrics.Input{Now: now, Sections: metrics.Sections(guild.channels.all, slices.Collect(maps.Values(guild.info.live)))}
-	read := func(name string, f func() error) {
-		if err != nil {
-			return
-		}
-		_, err = timeStoreRead(reads, name, func() (struct{}, error) { return struct{}{}, f() })
-		if err != nil {
-			err = fmt.Errorf("%s: %w", name, err)
-		}
-	}
-	read("read metrics state", func() (e error) { in.State, e = m.MetricsState(ctx); return e })
-	read("read metric weeks", func() (e error) { in.Weeks, e = m.MetricWeeks(ctx, rg.Weeks.Start, rg.Weeks.End); return e })
-	read("read active days", func() (e error) { in.Days, e = m.ActiveDays(ctx, rg.DaysFrom, now); return e })
-	read("read member events", func() (e error) { in.Members, e = m.MemberEvents(ctx, rg.MembersFrom); return e })
-	read("read voice spans", func() (e error) { in.Spans, e = m.VoiceSpans(ctx, rg.Weeks.Start, rg.Weeks.End); return e })
-	read("read first replies", func() (e error) { in.Replies, e = m.FirstReplies(ctx, rg.Joins.Start, rg.Joins.End); return e })
-	if err != nil {
-		return metrics.Report{}, time.Time{}, err
+	rd := storeReads{reads: reads}
+	rd.read(metricsStateRead, func() (e error) { in.State, e = m.MetricsState(ctx); return e })
+	rd.read("read metric weeks", func() (e error) { in.Weeks, e = m.MetricWeeks(ctx, rg.Weeks.Start, rg.Weeks.End); return e })
+	rd.read(activeDaysRead, func() (e error) { in.Days, e = m.ActiveDays(ctx, rg.DaysFrom, now); return e })
+	rd.read(memberEventsRead, func() (e error) { in.Members, e = m.MemberEvents(ctx, rg.MembersFrom); return e })
+	rd.read("read voice spans", func() (e error) { in.Spans, e = m.VoiceSpans(ctx, rg.Weeks.Start, rg.Weeks.End); return e })
+	rd.read("read first replies", func() (e error) { in.Replies, e = m.FirstReplies(ctx, rg.Joins.Start, rg.Joins.End); return e })
+	if rd.err != nil {
+		return metrics.Report{}, time.Time{}, rd.err
 	}
 	return metrics.Build(in), in.State.StartedAt, nil
 }
@@ -178,9 +177,8 @@ const (
 const unknownFigure = "-"
 
 func metricsViewOf(r metrics.Report, since time.Time) metricsView {
-	weekEnd := r.Week.AddDate(0, 0, 6)
 	v := metricsView{
-		Week:    r.Week.Format("2 Jan") + " to " + weekEnd.Format("2 Jan 2006"),
+		Week:    weekSpan(r.Week),
 		Since:   since,
 		Stats:   statsOf(r.Summary),
 		Brief:   briefOf(r.Brief),
@@ -188,25 +186,12 @@ func metricsViewOf(r metrics.Report, since time.Time) metricsView {
 		Trend:   trendOf(r.Trend),
 	}
 	for _, row := range r.Sections {
-		v.Sections = append(v.Sections, sectionRowView{CategoryID: row.CategoryID, Name: row.Name, Spark: sparkOf(row.Trend), Cells: []figureCell{
+		v.Sections = append(v.Sections, sectionRowView{CategoryID: row.CategoryID, Name: row.Name, Spark: sparkOf(row.Trend, "Active people per week, last 12 weeks"), Cells: []figureCell{
 			cellOf(row.Messages), cellOf(row.VoiceHours), cellOf(row.Active), cellOf(row.VoicePerPerson),
 		}})
 	}
 	c := r.Cohort
-	for _, s := range []struct {
-		label string
-		n     int
-	}{{"Joined", c.Joined}, {"Stayed past 24 h", c.Stayed}, {"Talked within 7 days", c.Talked}, {"Active at 30 days", c.Active30}} {
-		step := funnelStep{Label: s.label, Count: unknownFigure, Share: unknownFigure, Width: "0%"}
-		if c.Known {
-			step.Count = fmtCount(s.n)
-			if c.Joined > 0 {
-				share := float64(s.n) / float64(c.Joined)
-				step.Share, step.Width = fmtShare(share), strconv.FormatFloat(round1(share*100), 'f', -1, 64)+"%"
-			}
-		}
-		v.Funnel = append(v.Funnel, step)
-	}
+	v.Funnel = funnelOf([]funnelCount{{"Joined", c.Joined, c.Known}, {"Stayed past 24 h", c.Stayed, c.Known}, {"Talked within 7 days", c.Talked, c.Known}, {"Active at 30 days", c.Active30, c.Known}})
 	v.Reply = "Median time to first reply: " + shown(c.MedianReply, fmtWait) + "."
 	if c.Known && c.Messaged > 0 {
 		v.Reply += fmt.Sprintf(" %s of the %s who sent a message got a reply.", fmtCount(c.Replied), fmtCount(c.Messaged))
@@ -215,6 +200,35 @@ func metricsViewOf(r metrics.Report, since time.Time) metricsView {
 		v.Months = append(v.Months, monthRow{Name: m.Start.Format("Jan 2006"), New: shown(m.New, fmtCount), Returned: shown(m.Returned, fmtCount), Quiet: shown(m.Quiet, fmtCount)})
 	}
 	return v
+}
+
+// weekSpan names the week from the Monday given, as in 9 Nov to 15 Nov 2026.
+func weekSpan(monday time.Time) string {
+	return monday.Format("2 Jan") + " to " + monday.AddDate(0, 0, 6).Format("2 Jan 2006")
+}
+
+type funnelCount struct {
+	label string
+	n     int
+	known bool
+}
+
+// funnelOf lays out a funnel whose first step counts everyone, each step
+// with its share of the first. An unknown step reads unknownFigure.
+func funnelOf(counts []funnelCount) []funnelStep {
+	steps := make([]funnelStep, 0, len(counts))
+	for _, c := range counts {
+		step := funnelStep{Label: c.label, Count: unknownFigure, Share: unknownFigure, Width: "0%"}
+		if c.known {
+			step.Count = fmtCount(c.n)
+			if all := counts[0].n; all > 0 {
+				share := float64(c.n) / float64(all)
+				step.Share, step.Width = fmtShare(share), strconv.FormatFloat(round1(share*100), 'f', -1, 64)+"%"
+			}
+		}
+		steps = append(steps, step)
+	}
+	return steps
 }
 
 func statsOf(s metrics.Summary) []metricStat {
@@ -293,8 +307,8 @@ func cellOf(f metrics.Figure) figureCell {
 	return figureCell{Value: shown(f.Now, fmtNum), Change: shown(f.Change, fmtChange)}
 }
 
-// sparkOf draws a section's active people per week, its known weeks alone.
-func sparkOf(trend [metrics.TrendWeeks]metrics.Maybe[int]) sparkline {
+// sparkOf draws a count per week, its known weeks alone, named by label.
+func sparkOf(trend [metrics.TrendWeeks]metrics.Maybe[int], label string) sparkline {
 	lo, hi := math.Inf(1), math.Inf(-1)
 	words := make([]string, len(trend))
 	for i, t := range trend {
@@ -303,7 +317,7 @@ func sparkOf(trend [metrics.TrendWeeks]metrics.Maybe[int]) sparkline {
 			lo, hi = math.Min(lo, float64(t.V)), math.Max(hi, float64(t.V))
 		}
 	}
-	s := sparkline{Label: "Active people per week, last 12 weeks: " + strings.Join(words, ", ")}
+	s := sparkline{Label: label + ": " + strings.Join(words, ", ")}
 	var pts []string
 	for i, t := range trend {
 		if !t.Known {

@@ -616,6 +616,74 @@ func setRecordingRoles(ctx context.Context, tx *sql.Tx, guildID string, roles Re
 	return nil
 }
 
+// GetAORoles implements Store. No row is an empty set at version 0, as
+// GetRecordingRoles reads one.
+func (p *Postgres) GetAORoles(ctx context.Context, guildID string) (AORoles, error) {
+	var (
+		raw []byte
+		out AORoles
+	)
+	err := p.db.QueryRowContext(ctx,
+		`SELECT role_ids, version FROM ao_roles WHERE guild_id = $1`, guildID).Scan(&raw, &out.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AORoles{RoleIDs: []string{}}, nil
+	}
+	if err != nil {
+		return AORoles{}, fmt.Errorf("get AO roles of guild %q: %w", guildID, err)
+	}
+	if err := json.Unmarshal(raw, &out.RoleIDs); err != nil {
+		return AORoles{}, fmt.Errorf("decode AO roles of guild %q: %w", guildID, err)
+	}
+	if out.RoleIDs == nil {
+		out.RoleIDs = []string{}
+	}
+	return out, nil
+}
+
+// SaveAORoles implements Store.
+func (p *Postgres) SaveAORoles(ctx context.Context, guildID string, roles AORoles, entry ChangeLogEntry) error {
+	_, err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		return 0, setAORoles(ctx, tx, guildID, roles)
+	})
+	if err != nil {
+		return fmt.Errorf("save AO roles of guild %q: %w", guildID, err)
+	}
+	return nil
+}
+
+// setAORoles writes the guild's AO roles row only while it is at
+// roles.Version, as setRecordingRoles does. Nothing written is ErrStale.
+func setAORoles(ctx context.Context, tx *sql.Tx, guildID string, roles AORoles) error {
+	rolesJSON, err := encodeRoles(roles.RoleIDs)
+	if err != nil {
+		return err
+	}
+	var res sql.Result
+	if roles.Version == 0 {
+		res, err = tx.ExecContext(ctx, `
+			INSERT INTO ao_roles (guild_id, role_ids, version)
+			VALUES ($1, $2, 1)
+			ON CONFLICT (guild_id) DO NOTHING`,
+			guildID, rolesJSON)
+	} else {
+		res, err = tx.ExecContext(ctx, `
+			UPDATE ao_roles SET role_ids = $2, version = version + 1
+			WHERE guild_id = $1 AND version = $3`,
+			guildID, rolesJSON, roles.Version)
+	}
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStale
+	}
+	return nil
+}
+
 // GetRankRoles implements Store. No row is no roles at version 0, not an
 // error, since no panel admin has saved the rank roles.
 func (p *Postgres) GetRankRoles(ctx context.Context, guildID string) (RankRoles, error) {
@@ -761,6 +829,18 @@ func (p *Postgres) ListRecordingRoleChanges(ctx context.Context, limit int) ([]C
 		string(ChangeRecordingRoles), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list recording roles changes: %w", err)
+	}
+	return entries, nil
+}
+
+// ListAORoleChanges implements Store.
+func (p *Postgres) ListAORoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	entries, err := queryAll(ctx, p.db, scanChangeLogEntry,
+		`SELECT id, hub_id, forum_user_id, forum_username, at, action, diff
+		 FROM change_log WHERE hub_id IS NULL AND action = $1 ORDER BY id DESC LIMIT $2`,
+		string(ChangeAORoles), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list AO roles changes: %w", err)
 	}
 	return entries, nil
 }

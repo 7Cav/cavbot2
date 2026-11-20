@@ -5,6 +5,7 @@
   {{if .Settings.Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. Role details on this page may be out of date.</div>{{end}}
   {{template "rank-roles" .Settings}}
   {{template "recording-roles" .}}
+  {{template "ao-roles" .}}
 </main>
 {{end}}
 
@@ -103,6 +104,28 @@
   </form>
   <div class="block">
     {{template "changes" .Settings.RecordingRoles.Changes}}
+  </div>
+  </section>
+{{end}}
+
+{{define "ao-roles"}}
+  <section class="ao-roles" data-section="ao-roles">
+  <form method="post" action="/ao-roles#ao-roles" class="block" data-edit="ao-roles"{{if .Settings.RefusalFor "ao-roles"}} data-posted{{end}}>
+    <h2 class="block-header" id="ao-roles" tabindex="-1"{{if .Settings.RefusalFor "ao-roles"}} aria-describedby="refusal"{{end}}>AO roles</h2>
+    {{with .Settings.RefusalFor "ao-roles"}}{{template "refusal" .}}{{end}}
+    {{if .Settings.AORoles.Saved}}{{template "saved"}}{{end}}
+    <input type="hidden" name="version" value="{{.Settings.AORoles.Version}}">
+    <div class="block-row">
+      <div class="field" role="group" aria-labelledby="ao-roles-label" aria-describedby="ao-roles-hint">
+        <span class="field-label" id="ao-roles-label">Roles</span>
+        {{template "picker" .Settings.AORoles.Picker}}
+        <span class="field-hint" id="ao-roles-hint">The Joiners page counts new members by these roles.</span>
+      </div>
+    </div>
+    <div class="submit-row"><button type="submit" class="btn btn--cta" data-field="save">Save<span class="visually-hidden"> the AO roles</span></button></div>
+  </form>
+  <div class="block">
+    {{template "changes" .Settings.AORoles.Changes}}
   </div>
   </section>
 {{end}}

@@ -15,6 +15,15 @@ import (
 	"golang.org/x/net/html"
 )
 
+// testJoinersGroupID is the Joiners group the test panel is configured
+// with.
+const testJoinersGroupID = 410
+
+// addJoinersViewer makes the forum know a user in the Joiners group alone.
+func addJoinersViewer(f *fakeForum) *forumAccount {
+	return f.addUser(6789, "Lee.J", 2, []int{35, testJoinersGroupID})
+}
+
 // outsiderUsername is the forum username of the outsider addOutsider adds.
 const outsiderUsername = "Roe.R"
 
@@ -104,7 +113,7 @@ func TestSignedInVisitorCanGoBackToTheForum(t *testing.T) {
 
 // settingsSaveCases is a case for each save the hub page and the Settings
 // page post: a hub's create, register, update and remove, the guild-wide
-// moderator roles, the recording roles and the rank roles.
+// moderator roles, the recording roles, the AO roles and the rank roles.
 // Each reads the path it posts to and its form off a store that holds
 // testHub.
 var settingsSaveCases = []struct {
@@ -147,6 +156,11 @@ var settingsSaveCases = []struct {
 		form: func(t *testing.T, st store.Store) url.Values { return recordingRolesForm(t, st, "role-hq") },
 	},
 	{
+		name: "AO roles",
+		path: func(*testing.T, store.Store) string { return "/ao-roles" },
+		form: func(t *testing.T, st store.Store) url.Values { return aoRolesForm(t, st, "role-hq") },
+	},
+	{
 		name: "rank roles",
 		path: func(*testing.T, store.Store) string { return "/rank-roles" },
 		form: func(t *testing.T, st store.Store) url.Values {
@@ -171,6 +185,7 @@ func TestUserOutsideTheAdminGroupsSavesNothing(t *testing.T) {
 	}{
 		{"outsider", addOutsider},
 		{"Foxhole manager", addFoxholeManager},
+		{"Joiners viewer", addJoinersViewer},
 	}
 	for _, u := range users {
 		for _, tc := range settingsSaveCases {
@@ -461,10 +476,11 @@ func TestEveryRouteHasAnOutsiderCaseOrIsOpen(t *testing.T) {
 	for _, tc := range pageLoadCases {
 		reach(http.MethodGet, tc.path)
 	}
-	// TestAdminPagesAreForPanelAdminsAlone is the Settings page's and the
-	// Metrics page's case.
+	// TestPagesTheirGroupsDontOpenAnswerWithTheNoAccessPage is the Settings
+	// page's, the Metrics page's and the Joiners page's case.
 	reach(http.MethodGet, settingsPath)
 	reach(http.MethodGet, metricsPath)
+	reach(http.MethodGet, joinersPath)
 	starter := w.addStarter(5001, "Able.A", "discord-a")
 	signInAs(t, w.forum, w.b, starter.account)
 	for _, route := range recordingRoutes {

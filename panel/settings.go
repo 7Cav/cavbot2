@@ -29,7 +29,9 @@ type settingsView struct {
 	RankRoles    rankRolesPage
 	// RecordingRoles is the recording roles section below it.
 	RecordingRoles recordingRolesPage
-	Error          *fieldError
+	// AORoles is the AO roles section below that.
+	AORoles aoRolesPage
+	Error   *fieldError
 	// Refused is the form Error belongs to.
 	Refused string
 }
@@ -251,8 +253,8 @@ func (req pageRequest) settingsPageAddress() string {
 }
 
 // settings reads everything the Settings page renders from, once. It reads
-// the guild from the gateway state, then the rank roles and the recording
-// roles from the store.
+// the guild from the gateway state, then the rank roles, the recording
+// roles and the AO roles from the store.
 func (s *hubService) settings(ctx context.Context, req pageRequest) (settingsView, error) {
 	guild, err := s.readGuild(ctx)
 	if err != nil {
@@ -263,6 +265,9 @@ func (s *hubService) settings(ctx context.Context, req pageRequest) (settingsVie
 		return settingsView{}, err
 	}
 	if view.RecordingRoles, err = s.recordingRolesSection(ctx, guild.info, req); err != nil {
+		return settingsView{}, err
+	}
+	if view.AORoles, err = s.aoRolesSection(ctx, guild.info, req); err != nil {
 		return settingsView{}, err
 	}
 	return view, nil

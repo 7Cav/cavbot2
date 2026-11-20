@@ -34,8 +34,8 @@ var ErrNotFound = errors.New("store: not found")
 // ErrStale is returned by a combined write whose record is not as the
 // caller read it (#373): SaveHub of a hub whose row is at another version,
 // or of a new hub on a channel a hub already stands on,
-// SaveGuildModeratorRoles, SaveRecordingRoles or SaveRankRoles of a set
-// whose row is at another version, and SaveFoxholeNote over a note that isn't the one the
+// SaveGuildModeratorRoles, SaveRecordingRoles, SaveAORoles or SaveRankRoles
+// of a set whose row is at another version, and SaveFoxholeNote over a note that isn't the one the
 // saver loaded. The write lands neither the settings nor the entry. Compare
 // with errors.Is.
 var ErrStale = errors.New("store: the record changed since it was read")
@@ -114,6 +114,17 @@ type RecordingRoles struct {
 	RoleIDs []string
 	// Version counts the saves of the set that took effect, as
 	// GuildModeratorRoles.Version does. A guild with no row is at version 0.
+	Version int64
+}
+
+// AORoles is a guild's AO roles (GLOSSARY.md), the roles that mark a
+// member as playing one of the regiment's games, with the version of the
+// row that holds them.
+type AORoles struct {
+	// RoleIDs is a set, under the same rule as Hub.ModeratorRoleIDs.
+	RoleIDs []string
+	// Version counts the saves of the set that took effect, as
+	// RecordingRoles.Version does. A guild with no row is at version 0.
 	Version int64
 }
 
@@ -282,6 +293,8 @@ const (
 	ChangeModerators ChangeAction = "moderators"
 	// ChangeRecordingRoles is a save of the recording roles.
 	ChangeRecordingRoles ChangeAction = "recording_roles"
+	// ChangeAORoles is a save of the AO roles.
+	ChangeAORoles ChangeAction = "ao_roles"
 	// ChangeRankRoles is a save of the rank roles.
 	ChangeRankRoles ChangeAction = "rank_roles"
 	// ChangeNote is a save of one member's note on the Foxhole page. Its
@@ -420,7 +433,7 @@ type MemberNames struct {
 // it.
 //
 // A panel save is one call: SaveHub, RemoveHub, SaveGuildModeratorRoles,
-// SaveRecordingRoles or SaveRankRoles writes the save's settings and its
+// SaveRecordingRoles, SaveAORoles or SaveRankRoles writes the save's settings and its
 // change log entry in one transaction, so both land or neither does, and no method writes either
 // alone (#362).
 // The transaction never leaves the store. The pool holds two connections,
@@ -514,6 +527,17 @@ type Store interface {
 	// newest first in append order: the panel's recording roles section
 	// reading its own.
 	ListRecordingRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
+
+	// GetAORoles returns the AO roles with their version. A guild with no
+	// row reads back as an empty set at version 0, with no error.
+	GetAORoles(ctx context.Context, guildID string) (AORoles, error)
+	// SaveAORoles replaces the AO role IDs with roles.RoleIDs and appends
+	// the save's change log entry together, under SaveRecordingRoles' rules.
+	SaveAORoles(ctx context.Context, guildID string, roles AORoles, entry ChangeLogEntry) error
+	// ListAORoleChanges returns at most limit AO roles saves, the entries
+	// with action ChangeAORoles that reference no hub, newest first in
+	// append order.
+	ListAORoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
 	// GetRankRoles returns the rank roles with their version. A guild with
 	// no row reads back as no roles at version 0, with no error.

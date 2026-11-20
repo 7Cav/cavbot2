@@ -18,7 +18,8 @@ import (
 )
 
 // fakeMetrics answers the Metrics page's reads with the rows in data, read
-// ranges aside, and fails its weeks read once a test sets failing.
+// ranges aside, and fails its state read, which the Joiners page makes too,
+// once a test sets failing.
 type fakeMetrics struct {
 	mu      sync.Mutex
 	data    metrics.Input
@@ -44,16 +45,16 @@ func (f *fakeMetrics) rows() metrics.Input {
 }
 
 func (f *fakeMetrics) MetricsState(context.Context) (metrics.State, error) {
-	return f.rows().State, nil
-}
-
-func (f *fakeMetrics) MetricWeeks(context.Context, time.Time, time.Time) ([]metrics.WeekTotal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failing {
-		return nil, fmt.Errorf("metric weeks: %w", errStoreDown)
+		return metrics.State{}, fmt.Errorf("metrics state: %w", errStoreDown)
 	}
-	return f.data.Weeks, nil
+	return f.data.State, nil
+}
+
+func (f *fakeMetrics) MetricWeeks(context.Context, time.Time, time.Time) ([]metrics.WeekTotal, error) {
+	return f.rows().Weeks, nil
 }
 
 func (f *fakeMetrics) ActiveDays(context.Context, time.Time, time.Time) ([]metrics.ActiveDay, error) {
@@ -101,34 +102,39 @@ func TestMetricsPageListsSectionsInCategoryOrder(t *testing.T) {
 	}
 }
 
-// A read that fails gets the could-not-load page, reported once, and the
-// page carries none of the error's text.
-func TestMetricsPageReadFailureIsReportedAndSaysSo(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	signIn(t, w.forum, w.b)
-	reported := recordSentry(t)
-	w.metrics.fail()
+// On the Metrics page and the Joiners page, a metrics read that fails gets
+// the could-not-load page, reported once, and the page carries none of the
+// error's text.
+func TestMetricsReadFailureIsReportedAndSaysSo(t *testing.T) {
+	for _, path := range []string{metricsPath, joinersPath} {
+		t.Run(path, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			reported := recordSentry(t)
+			w.metrics.fail()
 
-	res := w.b.get(metricsPath)
+			res := w.b.get(path)
 
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if res.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", res.StatusCode)
-	}
-	doc, err := html.Parse(bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("parse page: %v", err)
-	}
-	if got := failureOf(t, doc); got != string(failureReadFailed) {
-		t.Errorf("failure page = %q, want %s", got, failureReadFailed)
-	}
-	if strings.Contains(string(body), errStoreDown.Error()) {
-		t.Error("the page carries the error's text")
-	}
-	if n := len(reported.recorded()); n != 1 {
-		t.Errorf("sent %d Sentry events, want 1", n)
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			if res.StatusCode != http.StatusServiceUnavailable {
+				t.Errorf("status = %d, want 503", res.StatusCode)
+			}
+			doc, err := html.Parse(bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("parse page: %v", err)
+			}
+			if got := failureOf(t, doc); got != string(failureReadFailed) {
+				t.Errorf("failure page = %q, want %s", got, failureReadFailed)
+			}
+			if strings.Contains(string(body), errStoreDown.Error()) {
+				t.Error("the page carries the error's text")
+			}
+			if n := len(reported.recorded()); n != 1 {
+				t.Errorf("sent %d Sentry events, want 1", n)
+			}
+		})
 	}
 }

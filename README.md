@@ -136,6 +136,7 @@ Not checked at startup, but each one silently disables something:
 | `BOT_DB_DSN` | The bot's own Postgres store (hubs, spawned channels and the change log for temporary voice channels, the Foxhole page's notes, approvals and change log, and the pages of each long `/loa` or `/awol` list for 30 days) stays off; the bot logs `BOT_DB_DSN not set, bot store disabled` once, every other command works as before, and `/voice-rename`, `/voice-lock`, `/voice-unlock`, `/record` and `/winged-aviator` refuse every invocation. `/loa` and `/awol` show only the first page of a long list, with its arrows greyed out and a line saying the other pages couldn't be kept. `.env.example` leaves it empty on purpose. Set it and the bot pings the database with a short retry, runs its migrations, loads the hub rows for temporary voice channels (`Starting temp voice channels`), ends any Foxhole action the last run left running as stopped by a restart (`Foxhole action stopped by a restart`), and only then opens the Discord session; a database it cannot reach or migrate stops the bot with `Bot store unavailable`. With no hub rows the feature does nothing; rows arrive through the panel. Under compose the value is `postgres://cavbot:<POSTGRES_PASSWORD>@postgres:5432/cavbot?sslmode=disable`. |
 | `PANEL_ADDR` | The panel, the bot's web UI, does not listen; the bot logs `PANEL_ADDR not set, panel disabled` once. Production's stack sets it to `:8080`. Once it's set, every other `PANEL_*` variable but `PANEL_GROUP_IDS` is required; a missing one stops the bot with `Panel misconfigured` before the Discord session opens. The panel also needs `BOT_DB_DSN`, because the hub page reads the store on every load; without it the bot logs `BOT_DB_DSN not set, panel disabled` and runs with no panel. The listener starts after READY and logs `Panel listening`. `.env.example` documents each `PANEL_*` variable. |
 | `FOXHOLE_GROUP_ID` | Defaults to `323`, the forum's Foxhole group. A forum user in it, as primary or secondary group, is a Foxhole manager: sign-in takes them to the panel's Foxhole page, and the hub page and its saves refuse them. Panel admins open the Foxhole page whatever their groups. The group check reads it on every request, so adding or removing a manager on the forum needs no deploy. With `PANEL_ADDR` set, a value that isn't a number stops the bot with `Panel misconfigured`. |
+| `JOINERS_GROUP_IDS` | Only panel admins open the panel's Joiners page. Set it to forum group IDs separated by commas, and a forum user in one of them, as primary or secondary group, opens it too. Panel admins always do. With `PANEL_ADDR` set, a value that does not parse stops the bot with `Panel misconfigured`. |
 | `RECORDER_TOKENS` | Recording stays off, and nobody can record; the bot logs `RECORDER_TOKENS not set, recording off` once, and `/record start` replies that recording is off. `/record` stays in the command list either way, so it keeps its Server Settings roles. Set it to a recorder token, or several separated by commas ([Recorder applications](#recorder-applications)), and each recorder connects at startup, logs `Recorder connected` with its user ID, and shows online. Removing every token and restarting turns recording off again. A recorder whose first login fails logs `Recorder login failed, trying again` and keeps logging in while the bot runs. One whose token Discord refuses goes to Sentry as `Recorder failed to connect`, and the bot and the other recorders keep running. |
 | `RECORDINGS_DIR` | Where recordings go: a directory per recording, named by its ID, holding one Ogg Opus track per speaker, named by the speaker's Discord ID, the info file `info.txt`, and the mix `mix.opus` once ffmpeg has built it. A mix ffmpeg can't build goes to Sentry as `Mix failed`, and the tracks stay downloadable. Defaults to `recordings` under the working directory. `docker-compose.yml` sets it to `/recordings`, the mount point of the `cavbot2_recordings` volume, and doesn't read it from `.env`, so the tracks always land on the volume and survive a redeploy. A directory the bot can't write to goes to Sentry as `Track not written` at a speaker's first words, and the recording keeps running without that track. Each recording's directory is deleted with its row 30 days after the recording stopped, by the retention sweep, which runs at startup and every hour, whether or not a recorder token is set. |
 | `WINGED_AVIATOR_ARMA_ROLE_ID`, `WINGED_AVIATOR_DCS_ROLE_ID` | That game's winged aviators stay off: the bot logs `WINGED_AVIATOR_ARMA_ROLE_ID not set, Arma winged aviators off` or `WINGED_AVIATOR_DCS_ROLE_ID not set, DCS winged aviators off` once and tracks nobody for it, and `/winged-aviator` replies that they aren't set up. `/winged-aviator` stays in the command list either way, so it keeps its Server Settings roles. Set each to its Winged Aviator role's ID (right-click the role, Copy Role ID), and the role follows each of its winged aviators' milpacs: the bot takes it on a discharge, gives it back on a re-enlistment or a rejoin, and checks every winged aviator at startup and once an hour. The first start with one set makes every holder of that role a winged aviator. Each also needs `BOT_DB_DSN`, which keeps the lists, and the bot's highest role above the Winged Aviator roles. |
@@ -207,8 +208,7 @@ store disabled` or `Bot store configured` followed by `Bot database migrated`,
 then `RECORDER_TOKENS not set, recording off` or a `Recorder connected` line per
 recorder, then `Starting temp voice channels` when the store is configured,
 `Panel listening` when the panel is configured, `Registering commands`,
-`Commands registered`, `Starting Star Citizen joiner report scheduler`, and
-finally `Bot is now running. Press CTRL-C to exit`. That
+`Commands registered`, and finally `Bot is now running. Press CTRL-C to exit`. That
 last line is the success signal — anything that stops earlier is a failed
 start.
 
@@ -236,7 +236,7 @@ after a good deploy. The reverse proxy in front of the panel
 has a 90-second read timeout. A hub or Foxhole page load takes about 20 seconds
 at the slowest: the 10-second group check, then the page's 10-second time
 budget. The budget covers the page's store reads and any wait for Discord to
-send the bot the guild's data, or on the Foxhole page the member list. A roster preview's fetch of the unit's roster from the 7Cav API counts against the same budget, and its Confirm fetches the roster again under a budget of its own. A save can take longer. It waits at most the same 10 seconds
+send the bot the guild's data, or on the Foxhole and Joiners pages the member list. A roster preview's fetch of the unit's roster from the 7Cav API counts against the same budget, and its Confirm fetches the roster again under a budget of its own. A save can take longer. It waits at most the same 10 seconds
 for that data, and its create or rename goes to Discord with up to 20 seconds
 per attempt. discordgo retries a call Discord answers with a 502, up to three
 times. A Foxhole action, such as a purge, runs in the background and its
@@ -244,15 +244,6 @@ request redirects at once, so the proxy never cuts one off however long it
 runs. Keep the proxy's read timeout above the slowest request. If the proxy drops a page before the panel gives up on it, the page
 looks like an [abandoned page load](GLOSSARY.md#observability) and reaches no
 one.
-
-### One thing that is not a command
-
-`main.go` starts a weekly Star Citizen joiner report unconditionally, with no
-env var to disable it. It fires Sundays at 04:20 UTC and DMs a **hardcoded
-production user ID** (`commands/star_citizen_joiners.go`). Against your own test
-guild the DM simply fails, since the bot shares no server with that person. If
-you point `GUILD_ID` at the live 7Cav server and leave the bot running over a
-Sunday, a real person gets your test output. Prefer a test guild.
 
 ### Troubleshooting
 
