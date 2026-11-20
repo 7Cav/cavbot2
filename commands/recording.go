@@ -96,8 +96,9 @@ var (
 	// errRecorderComingBack: the start took an offline recorder, which
 	// didn't log back in within the join's deadline.
 	errRecorderComingBack = errors.New("recording: the recorder is still logging back in")
-	// errRecorderNotLetIn: Discord refused the overwrite that lets the
-	// recorder into the channel.
+	// errRecorderNotLetIn: the overwrite that lets the recorder into the
+	// channel could not be set, because Discord refused it or the channel
+	// is missing from the cache.
 	errRecorderNotLetIn = errors.New("recording: the recorder could not be let into the channel")
 )
 
@@ -239,8 +240,9 @@ type RecordingRuntime struct {
 	running map[string]*activeRecording
 	// letIn holds each recorder and channel whose overwrite the runtime set,
 	// until the last leave there undoes it. A recorder a cut short freed can
-	// start in another channel before that leave runs, so the channel is
-	// part of the key, or in the same one, so a grant counts its holders.
+	// start again before that leave runs: in another channel, so the
+	// channel is part of the key, or in the same one, so a grant counts its
+	// holders.
 	letIn map[recorderInChannel]*recorderGrant
 
 	// recordCommandID is /record's ID, empty until the startup sync has
