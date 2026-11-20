@@ -290,15 +290,16 @@ func s256(verifier string) string {
 
 func testConfig(f *fakeForum) Config {
 	return Config{
-		Addr:           ":0",
-		BaseURL:        testBaseURL,
-		ClientID:       testClientID,
-		ClientSecret:   testClientSecret,
-		AuthorizeURL:   f.srv.URL + "/oauth2/authorize",
-		TokenURL:       f.srv.URL + "/api/oauth2/token",
-		UserinfoURL:    f.srv.URL + "/api/me",
-		AdminGroupIDs:  []int{71, 47, 44},
-		FoxholeGroupID: testFoxholeGroupID,
+		Addr:            ":0",
+		BaseURL:         testBaseURL,
+		ClientID:        testClientID,
+		ClientSecret:    testClientSecret,
+		AuthorizeURL:    f.srv.URL + "/oauth2/authorize",
+		TokenURL:        f.srv.URL + "/api/oauth2/token",
+		UserinfoURL:     f.srv.URL + "/api/me",
+		AdminGroupIDs:   []int{71, 47, 44},
+		FoxholeGroupID:  testFoxholeGroupID,
+		JoinersGroupIDs: []int{testJoinersGroupID},
 	}
 }
 

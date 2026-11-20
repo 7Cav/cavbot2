@@ -141,7 +141,7 @@ func (p *Panel) Start() error {
 		}
 	}()
 	utils.Info("Panel listening", "addr", ln.Addr().String(), "base_url", p.cfg.BaseURL,
-		"admin_group_ids", p.cfg.AdminGroupIDs, "foxhole_group_id", p.cfg.FoxholeGroupID)
+		"admin_group_ids", p.cfg.AdminGroupIDs, "foxhole_group_id", p.cfg.FoxholeGroupID, "joiners_group_ids", p.cfg.JoinersGroupIDs)
 	return nil
 }
 
@@ -205,6 +205,7 @@ func (p *Panel) routes() []route {
 		{"POST /hubs/{id}/remove", p.withPanelAdmin(p.removeHub)},
 		{"POST /moderators", p.withPanelAdmin(p.saveModerators)},
 		{"POST /recording-roles", p.withPanelAdmin(p.saveRecordingRoles)},
+		{"POST /ao-roles", p.withPanelAdmin(p.saveAORoles)},
 		{"GET " + settingsPath, p.withAdminPage(p.settingsPage)},
 		{"GET " + metricsPath, p.withAdminPage(p.metricsPage)},
 		{"POST /rank-roles", p.withPanelAdmin(p.saveRankRoles)},

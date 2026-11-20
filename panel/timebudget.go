@@ -138,6 +138,18 @@ func (s pageStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]s
 	})
 }
 
+func (s pageStore) GetAORoles(ctx context.Context, guildID string) (store.AORoles, error) {
+	return timeStoreRead(s.reads, aoRolesRead, func() (store.AORoles, error) {
+		return s.Store.GetAORoles(ctx, guildID)
+	})
+}
+
+func (s pageStore) ListAORoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	return timeStoreRead(s.reads, aoRoleChangesRead, func() ([]store.ChangeLogEntry, error) {
+		return s.Store.ListAORoleChanges(ctx, limit)
+	})
+}
+
 func (s pageStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
 	return timeStoreRead(s.reads, changeLogRead, func() ([]store.ChangeLogEntry, error) {
 		return s.Store.ListChangeLog(ctx, hubID, limit)

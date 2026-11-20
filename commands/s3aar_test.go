@@ -20,8 +20,7 @@ import (
 // can assert on the lines the code under test emits, INFO and WARN alike.
 //
 // It deliberately does NOT install a logger of its own. utils.Logger is written
-// exactly once, in TestMain, because a leaked goroutine reads it for the rest
-// of the run and any later write is a data race — see the comment on TestMain.
+// exactly once, in TestMain; see the comment there.
 // Every assertion here is a presence check, so lines at other levels are
 // inert.
 func captureLogs(t *testing.T) *syncBuffer {

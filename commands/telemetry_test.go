@@ -25,8 +25,7 @@ import (
 // a hand-rolled splitter would be this test's own re-reading of slog's encoder,
 // so a mistake shared between the two would pass here and still fail on the host.
 // It reads the package-wide sink rather than installing a logger of its own:
-// utils.Logger is written exactly once, in TestMain, because a leaked goroutine
-// reads it for the rest of the run and any later write is a data race.
+// utils.Logger is written exactly once, in TestMain; see the comment there.
 func captureTelemetryLines(t *testing.T) func() []map[string]string {
 	t.Helper()
 

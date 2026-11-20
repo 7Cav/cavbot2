@@ -155,6 +155,20 @@ func (s *ctxStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([]s
 	return s.Fake.ListRecordingRoleChanges(ctx, limit)
 }
 
+func (s *ctxStore) GetAORoles(ctx context.Context, guildID string) (store.AORoles, error) {
+	if err := s.gate(ctx, "GetAORoles"); err != nil {
+		return store.AORoles{}, err
+	}
+	return s.Fake.GetAORoles(ctx, guildID)
+}
+
+func (s *ctxStore) ListAORoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	if err := s.gate(ctx, "ListAORoleChanges"); err != nil {
+		return nil, err
+	}
+	return s.Fake.ListAORoleChanges(ctx, limit)
+}
+
 func (s *ctxStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	if err := s.gate(ctx, "ListFoxholeRecords"); err != nil {
 		return nil, err

@@ -40,6 +40,8 @@ type Fake struct {
 	guildRoles map[string]GuildModeratorRoles
 	// recordingRoles holds each guild's recording roles and their version.
 	recordingRoles map[string]RecordingRoles
+	// aoRoles holds each guild's AO roles and their version.
+	aoRoles map[string]AORoles
 	// rankRoles holds each guild's rank roles and their version.
 	rankRoles map[string]RankRoles
 	// changes is the hub page's change log, and foxholeChanges the Foxhole
@@ -80,6 +82,7 @@ func NewFake() *Fake {
 		spawned:         make(map[string]SpawnedChannel),
 		guildRoles:      make(map[string]GuildModeratorRoles),
 		recordingRoles:  make(map[string]RecordingRoles),
+		aoRoles:         make(map[string]AORoles),
 		rankRoles:       make(map[string]RankRoles),
 		changes:         changeLog{nextID: 1},
 		foxholeChanges:  changeLog{nextID: 1},
@@ -412,6 +415,33 @@ func (f *Fake) SaveRecordingRoles(ctx context.Context, guildID string, roles Rec
 	})
 }
 
+// GetAORoles implements Store.
+func (f *Fake) GetAORoles(ctx context.Context, guildID string) (AORoles, error) {
+	if err := ctx.Err(); err != nil {
+		return AORoles{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	roles := f.aoRoles[guildID]
+	roles.RoleIDs = slices.Clone(roles.RoleIDs)
+	if roles.RoleIDs == nil {
+		roles.RoleIDs = []string{}
+	}
+	return roles, nil
+}
+
+// SaveAORoles implements Store. A guild with no set stored is at version 0.
+func (f *Fake) SaveAORoles(ctx context.Context, guildID string, roles AORoles, entry ChangeLogEntry) error {
+	return f.writeAllOrNothing(ctx, &entry, func() (int64, error) {
+		current := f.aoRoles[guildID]
+		if current.Version != roles.Version {
+			return 0, ErrStale
+		}
+		f.aoRoles[guildID] = AORoles{RoleIDs: slices.Clone(roles.RoleIDs), Version: current.Version + 1}
+		return 0, nil
+	})
+}
+
 // GetRankRoles implements Store.
 func (f *Fake) GetRankRoles(ctx context.Context, guildID string) (RankRoles, error) {
 	if err := ctx.Err(); err != nil {
@@ -531,6 +561,14 @@ func (f *Fake) ListRecordingRoleChanges(ctx context.Context, limit int) ([]Chang
 		return nil, err
 	}
 	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeRecordingRoles }), nil
+}
+
+// ListAORoleChanges implements Store.
+func (f *Fake) ListAORoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeAORoles }), nil
 }
 
 // ListRankRoleChanges implements Store.

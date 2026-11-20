@@ -291,7 +291,7 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
 /* The guild-wide moderator section, the rank roles section and the
    recording roles section: each form beside its change log. A rank roles
    preview spans both columns above them. */
-.moderators, .rank-roles, .recording-roles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
+.moderators, .rank-roles, .recording-roles, .ao-roles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
 .rank-roles > .block--danger { grid-column: 1 / -1; }
 
 /* The change log under a hub's form. Each entry is a <details> folded to
@@ -569,7 +569,7 @@ h2[tabindex="-1"]:focus, .note[tabindex="-1"]:focus { outline: none; }
    logo on one row. */
 @media (max-width: 767px) {
   .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
-  .moderators, .recording-roles { grid-template-columns: minmax(0, 1fr); }
+  .moderators, .recording-roles, .ao-roles { grid-template-columns: minmax(0, 1fr); }
   .rail {
     position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line);
     display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;

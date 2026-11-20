@@ -16,7 +16,7 @@ func clearPanelEnv(t *testing.T) {
 	for _, name := range []string{
 		"PANEL_ADDR", "PANEL_BASE_URL", "PANEL_OAUTH_CLIENT_ID", "PANEL_OAUTH_CLIENT_SECRET",
 		"PANEL_OAUTH_AUTHORIZE_URL", "PANEL_OAUTH_TOKEN_URL", "PANEL_OAUTH_USERINFO_URL", "PANEL_GROUP_IDS",
-		"FOXHOLE_GROUP_ID",
+		"FOXHOLE_GROUP_ID", "JOINERS_GROUP_IDS",
 	} {
 		t.Setenv(name, "")
 	}
@@ -53,20 +53,17 @@ func TestConfigFromEnvNamesTheMissingVariable(t *testing.T) {
 }
 
 func TestConfigFromEnvRefusesGroupIDsThatDoNotParse(t *testing.T) {
-	clearPanelEnv(t)
-	t.Setenv("PANEL_ADDR", ":8080")
-	t.Setenv("PANEL_BASE_URL", "https://panel.test")
-	t.Setenv("PANEL_OAUTH_CLIENT_ID", "id")
-	t.Setenv("PANEL_OAUTH_CLIENT_SECRET", "secret")
-	t.Setenv("PANEL_OAUTH_AUTHORIZE_URL", "https://forum.test/oauth2/authorize")
-	t.Setenv("PANEL_OAUTH_TOKEN_URL", "https://forum.test/api/oauth2/token")
-	t.Setenv("PANEL_OAUTH_USERINFO_URL", "https://forum.test/api/me")
-	t.Setenv("PANEL_GROUP_IDS", "71, forty-seven")
+	for _, name := range []string{"PANEL_GROUP_IDS", "JOINERS_GROUP_IDS"} {
+		t.Run(name, func(t *testing.T) {
+			setPanelEnv(t, newFakeForum(t))
+			t.Setenv(name, "71, forty-seven")
 
-	_, err := ConfigFromEnv()
+			_, err := ConfigFromEnv()
 
-	if err == nil || !strings.Contains(err.Error(), "PANEL_GROUP_IDS") {
-		t.Fatalf("ConfigFromEnv error = %v, want one naming PANEL_GROUP_IDS", err)
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("ConfigFromEnv error = %v, want one naming %s", err, name)
+			}
+		})
 	}
 }
 
@@ -164,5 +161,29 @@ func TestConfigFromEnvRefusesAFoxholeGroupThatIsNotANumber(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "FOXHOLE_GROUP_ID") {
 		t.Fatalf("ConfigFromEnv error = %v, want one naming FOXHOLE_GROUP_ID", err)
+	}
+}
+
+// JOINERS_GROUP_IDS names the Joiners groups: a user in any of them is a
+// Joiners viewer, who lands on the Joiners page. Unset, it names none.
+func TestJoinersGroupsAreTheOnesTheVariableNames(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"set", "410, 411", joinersPath},
+		{"unset", "", recordingsPath},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeForum(t)
+			setPanelEnv(t, f)
+			t.Setenv("JOINERS_GROUP_IDS", tc.value)
+			w := worldFromEnv(t, f)
+			signInAs(t, f, w.b, f.addUser(2468, "Smith.F", 2, []int{35, 411}))
+
+			assertRedirect(t, w.b.get("/"), tc.want)
+		})
 	}
 }

@@ -232,6 +232,21 @@ func (s hookedStore) ListRecordingRoleChanges(ctx context.Context, limit int) ([
 	return s.st.ListRecordingRoleChanges(ctx, limit)
 }
 
+func (s hookedStore) GetAORoles(ctx context.Context, guildID string) (store.AORoles, error) {
+	s.hook(ctx)
+	return s.st.GetAORoles(ctx, guildID)
+}
+
+func (s hookedStore) SaveAORoles(ctx context.Context, guildID string, roles store.AORoles, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
+	return s.st.SaveAORoles(ctx, guildID, roles, entry)
+}
+
+func (s hookedStore) ListAORoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
+	return s.st.ListAORoleChanges(ctx, limit)
+}
+
 func (s hookedStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
 	s.hook(ctx)
 	return s.st.GetRankRoles(ctx, guildID)
@@ -440,6 +455,19 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 				return 0
 			},
 			action: store.ChangeRecordingRoles,
+		},
+		{
+			name:    "AO roles",
+			landsOn: settingsPath,
+			path:    func(*testing.T, store.Store) string { return "/ao-roles" },
+			form:    func(t *testing.T, st store.Store) url.Values { return aoRolesForm(t, st, "role-hq") },
+			checkSaved: func(t *testing.T, st store.Store) int64 {
+				if got := storedAORoles(t, st).RoleIDs; !sameSet(got, []string{"role-hq"}) {
+					t.Errorf("stored AO roles = %v, want role-hq alone", got)
+				}
+				return 0
+			},
+			action: store.ChangeAORoles,
 		},
 	}
 	for _, tc := range cases {
@@ -680,6 +708,7 @@ type savedState struct {
 	Hubs      []store.Hub
 	Roles     store.GuildModeratorRoles
 	Recording store.RecordingRoles
+	AO        store.AORoles
 	Ranks     store.RankRoles
 	Entries   map[int64][]store.ChangeLogEntry
 }
@@ -693,7 +722,7 @@ func readSavedState(t *testing.T, st store.Store) savedState {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st), Ranks: storedRankRoles(t, st),
+	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st), AO: storedAORoles(t, st), Ranks: storedRankRoles(t, st),
 		Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
 	for _, h := range hubs {
 		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)
