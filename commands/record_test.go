@@ -705,6 +705,16 @@ var recordRefusals = []recordRefusal{
 		carries: []string{recorderNotLetInRefusal},
 	},
 	{
+		name:      "channel missing from the cache",
+		recorders: []string{testRecorder},
+		setup: func(_ *testing.T, sc *recordScene) permMember {
+			sc.fake.channelErr = discordgo.ErrStateNotFound
+			sc.fake.setVoice(recStarter.id, recordChannel)
+			return recStarter
+		},
+		carries: []string{recorderNotLetInRefusal},
+	},
+	{
 		name: "recording off",
 		setup: func(_ *testing.T, sc *recordScene) permMember {
 			sc.fake.setVoice(recStarter.id, recordChannel)
