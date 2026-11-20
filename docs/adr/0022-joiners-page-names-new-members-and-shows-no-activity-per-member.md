@@ -14,8 +14,8 @@ A name and a join time are what a welcome needs, and Discord already shows
 both on a member's server profile. Activity is different. ADR 0021 keeps it
 as group totals so it can't feed requirements or promotions. The page shows
 activity only in the pipeline, as totals for a whole join cohort. The Joiners
-group sees those totals too, so the page widens ADR 0021's audience for them
-beyond panel admins.
+group sees those totals too, so this ADR amends ADR 0021 to widen their
+audience beyond panel admins.
 
 ## Considered options
 

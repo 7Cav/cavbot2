@@ -32,23 +32,29 @@ func joinerNames(t *testing.T, doc *html.Node) []string {
 // The AOs table has a row per AO role, highest role position first, then No
 // AO role and Joined and left, each counting the week's joiners, bots left
 // out. The list shows the first AO's joiners by default, and the row ao
-// names otherwise.
+// names otherwise. With the bot's gateway connection down the page still
+// shows in full, with a notice that it may be out of date.
 func TestJoinersPageListsTheWeeksJoinersByAORole(t *testing.T) {
 	w := newTestWorld(t, testHub())
 	signIn(t, w.forum, w.b)
 	w.discord.addRoles(&discordgo.Role{ID: "role-arma", Name: "Arma 3", Position: 5}, &discordgo.Role{ID: "role-sc", Name: "Star Citizen", Position: 9})
 	w.b.postForm("/ao-roles", aoRolesForm(t, w.st, "role-arma", "role-sc"))
 	now := w.clock.Now()
-	w.discord.setMemberList(commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true, Members: []commands.ListedMember{
+	list := commands.MemberListSnapshot{Status: commands.MemberListComplete, Connected: true, Members: []commands.ListedMember{
 		testBotMember,
 		{ID: "300000000000000001", Username: "halvo_k", Nick: "Halvorsen.K", JoinedAt: now.Add(-2 * time.Hour), RoleIDs: []string{"role-sc"}},
 		{ID: "300000000000000002", Username: "dreyes", GlobalName: "Reyes.D", JoinedAt: now.Add(-26 * time.Hour), RoleIDs: []string{"role-sc", "role-arma"}},
 		{ID: "300000000000000003", Username: "quietmoth", JoinedAt: now.Add(-50 * time.Hour)},
 		{ID: "300000000000000004", Username: "tng", Nick: "Ng.T", JoinedAt: now.AddDate(0, 0, -14), RoleIDs: []string{"role-sc"}},
 		{ID: "300000000000000005", Username: "musicbot", JoinedAt: now.Add(-3 * time.Hour), Bot: true},
-	}})
+	}}
+	w.discord.setMemberList(list)
 
 	doc := parseHTML(t, w.b.get(joinersPath))
+
+	if hasDisconnectedNotice(doc) {
+		t.Error("the page has the disconnected notice with the connection up")
+	}
 
 	if got, want := valuesOf(doc, "data-ao"), []string{"role-sc", "role-arma", aoNone, aoLeft}; !slices.Equal(got, want) {
 		t.Errorf("AO rows = %v, want %v", got, want)
@@ -71,6 +77,17 @@ func TestJoinersPageListsTheWeeksJoinersByAORole(t *testing.T) {
 		if got := joinerNames(t, parseHTML(t, w.b.get(joinersPath+tc.query))); !slices.Equal(got, tc.want) {
 			t.Errorf("GET %s%s lists %v, want %v", joinersPath, tc.query, got, tc.want)
 		}
+	}
+
+	list.Connected = false
+	w.discord.setMemberList(list)
+	doc = parseHTML(t, w.b.get(joinersPath))
+
+	if !hasDisconnectedNotice(doc) {
+		t.Error("the page has no disconnected notice while the connection is down")
+	}
+	if got, want := joinerNames(t, doc), []string{"Halvorsen.K", "Reyes.D"}; !slices.Equal(got, want) {
+		t.Errorf("while disconnected the page lists %v, want %v", got, want)
 	}
 }
 

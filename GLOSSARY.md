@@ -825,9 +825,10 @@ starting when the page begins reading. A load still reading when it runs out
 fails at once, whatever read it is waiting on, and the page says it took too
 long. A load still waiting on Discord fails at once too, and the page says
 Discord has not sent the data. The Foxhole and Joiners pages are the
-exception. They show everything that doesn't need the member list, with a
-notice in place of the rest. Downloading a recording's mix or zip has no
-time budget.
+exception. They show a notice in place of whatever needs the member list.
+The Foxhole page shows the rest. Every block on the Joiners page needs the
+list, so there the notice replaces the whole report. Downloading a
+recording's mix or zip has no time budget.
 _Avoid_: page timeout, deadline.
 
 **Failed start**:

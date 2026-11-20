@@ -4,6 +4,7 @@
   {{with .Joiners}}
   <p class="desc">New server members by AO role, in Zulu. A week starts Monday 0000z.</p>
   {{with .ListNotice}}{{template "member-list-notice" .}}{{else}}
+  {{if .Disconnected}}<div class="note note--neutral" data-notice="disconnected">Cavbot2 has lost its connection to Discord. The figures on this page may be out of date.</div>{{end}}
   <div class="jn-grid">
     <div>
       <section class="block" data-field="aos">

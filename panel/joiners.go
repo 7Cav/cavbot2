@@ -41,7 +41,11 @@ type joinersView struct {
 	// ListNotice stands in for every block while the member list isn't
 	// complete, since each of them reads it.
 	ListNotice *listNotice
-	Week       string
+	// Disconnected is the bot's gateway connection down with the list
+	// complete: the page shows in full, and says the figures may be out of
+	// date.
+	Disconnected bool
+	Week         string
 	// Prev and Next are the addresses of the weeks either side, empty past
 	// the weeks the page offers.
 	Prev, Next string
@@ -155,7 +159,9 @@ func (p *Panel) joiners(ctx context.Context, reads *pageReads, now, week time.Ti
 		in.Members = append(in.Members, metrics.Member{ID: lm.ID, JoinedAt: lm.JoinedAt, RoleIDs: lm.RoleIDs})
 		listed[lm.ID] = lm
 	}
-	return joinersViewOf(metrics.BuildJoiners(in), guild.info.roleNames, listed, now, week, ao), nil
+	v := joinersViewOf(metrics.BuildJoiners(in), guild.info.roleNames, listed, now, week, ao)
+	v.Disconnected = !list.Connected
+	return v, nil
 }
 
 // joinersViewOf lays out the figures. The list shows the AO ao names, or
