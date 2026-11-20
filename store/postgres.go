@@ -757,6 +757,75 @@ func setForumGroups(ctx context.Context, tx *sql.Tx, guildID string, groups Foru
 	return nil
 }
 
+// GetWarningImmuneRoles implements Store. No row is an empty set at
+// version 0, as GetRecordingRoles reads one.
+func (p *Postgres) GetWarningImmuneRoles(ctx context.Context, guildID string) (WarningImmuneRoles, error) {
+	var (
+		raw []byte
+		out WarningImmuneRoles
+	)
+	err := p.db.QueryRowContext(ctx,
+		`SELECT role_ids, version FROM warning_immune_roles WHERE guild_id = $1`, guildID).Scan(&raw, &out.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WarningImmuneRoles{RoleIDs: []string{}}, nil
+	}
+	if err != nil {
+		return WarningImmuneRoles{}, fmt.Errorf("get warning immune roles of guild %q: %w", guildID, err)
+	}
+	if err := json.Unmarshal(raw, &out.RoleIDs); err != nil {
+		return WarningImmuneRoles{}, fmt.Errorf("decode warning immune roles of guild %q: %w", guildID, err)
+	}
+	if out.RoleIDs == nil {
+		out.RoleIDs = []string{}
+	}
+	return out, nil
+}
+
+// SaveWarningImmuneRoles implements Store.
+func (p *Postgres) SaveWarningImmuneRoles(ctx context.Context, guildID string, roles WarningImmuneRoles, entry ChangeLogEntry) error {
+	_, err := p.saveWithEntry(ctx, entry, func(tx *sql.Tx) (int64, error) {
+		return 0, setWarningImmuneRoles(ctx, tx, guildID, roles)
+	})
+	if err != nil {
+		return fmt.Errorf("save warning immune roles of guild %q: %w", guildID, err)
+	}
+	return nil
+}
+
+// setWarningImmuneRoles writes the guild's warning immune roles row only
+// while it is at roles.Version, as setRecordingRoles does. Nothing written
+// is ErrStale.
+func setWarningImmuneRoles(ctx context.Context, tx *sql.Tx, guildID string, roles WarningImmuneRoles) error {
+	rolesJSON, err := encodeRoles(roles.RoleIDs)
+	if err != nil {
+		return err
+	}
+	var res sql.Result
+	if roles.Version == 0 {
+		res, err = tx.ExecContext(ctx, `
+			INSERT INTO warning_immune_roles (guild_id, role_ids, version)
+			VALUES ($1, $2, 1)
+			ON CONFLICT (guild_id) DO NOTHING`,
+			guildID, rolesJSON)
+	} else {
+		res, err = tx.ExecContext(ctx, `
+			UPDATE warning_immune_roles SET role_ids = $2, version = version + 1
+			WHERE guild_id = $1 AND version = $3`,
+			guildID, rolesJSON, roles.Version)
+	}
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStale
+	}
+	return nil
+}
+
 // GetRankRoles implements Store. No row is no roles at version 0, not an
 // error, since no panel admin has saved the rank roles.
 func (p *Postgres) GetRankRoles(ctx context.Context, guildID string) (RankRoles, error) {
@@ -926,6 +995,18 @@ func (p *Postgres) ListForumGroupChanges(ctx context.Context, limit int) ([]Chan
 		string(ChangeForumGroups), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list forum groups changes: %w", err)
+	}
+	return entries, nil
+}
+
+// ListWarningImmuneRoleChanges implements Store.
+func (p *Postgres) ListWarningImmuneRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	entries, err := queryAll(ctx, p.db, scanChangeLogEntry,
+		`SELECT id, hub_id, forum_user_id, forum_username, at, action, diff
+		 FROM change_log WHERE hub_id IS NULL AND action = $1 ORDER BY id DESC LIMIT $2`,
+		string(ChangeWarningImmuneRoles), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list warning immune roles changes: %w", err)
 	}
 	return entries, nil
 }
@@ -1419,6 +1500,73 @@ func (p *Postgres) RemoveWingedAviator(ctx context.Context, guildID, roleID, use
 		return fmt.Errorf("remove winged aviator %q of role %q in guild %q: %w", userID, roleID, guildID, err)
 	}
 	return nil
+}
+
+// warningColumns is the select list every warning read shares, in
+// scanWarning's order.
+const warningColumns = `id, guild_id, member_id, moderator_id, channel_id, message_id, reason, created_at`
+
+// scanWarning reads one warning row in warningColumns order.
+func scanWarning(row scanner) (Warning, error) {
+	var w Warning
+	err := row.Scan(&w.ID, &w.GuildID, &w.MemberID, &w.ModeratorID, &w.ChannelID, &w.MessageID, &w.Reason, &w.CreatedAt)
+	return w, err
+}
+
+// AddWarning implements Store.
+func (p *Postgres) AddWarning(ctx context.Context, w Warning) (Warning, error) {
+	stored, err := scanWarning(p.db.QueryRowContext(ctx, `
+		INSERT INTO warnings (guild_id, member_id, moderator_id, channel_id, message_id, reason)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING `+warningColumns,
+		w.GuildID, w.MemberID, w.ModeratorID, w.ChannelID, w.MessageID, w.Reason))
+	if err != nil {
+		return Warning{}, fmt.Errorf("add warning of member %q in guild %q: %w", w.MemberID, w.GuildID, err)
+	}
+	return stored, nil
+}
+
+// SetWarningNotice implements Store. No row of the guild matched is
+// ErrNotFound.
+func (p *Postgres) SetWarningNotice(ctx context.Context, guildID string, id int64, messageID string) error {
+	res, err := p.db.ExecContext(ctx,
+		`UPDATE warnings SET message_id = $3 WHERE guild_id = $1 AND id = $2`, guildID, id, messageID)
+	if err != nil {
+		return fmt.Errorf("set notice of warning %d in guild %q: %w", id, guildID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set notice of warning %d in guild %q: %w", id, guildID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("set notice of warning %d in guild %q: %w", id, guildID, ErrNotFound)
+	}
+	return nil
+}
+
+// ListWarnings implements Store.
+func (p *Postgres) ListWarnings(ctx context.Context, guildID, memberID string) ([]Warning, error) {
+	ws, err := queryAll(ctx, p.db, scanWarning,
+		`SELECT `+warningColumns+` FROM warnings WHERE guild_id = $1 AND member_id = $2
+		 ORDER BY created_at DESC, id DESC`, guildID, memberID)
+	if err != nil {
+		return nil, fmt.Errorf("list warnings of member %q in guild %q: %w", memberID, guildID, err)
+	}
+	return ws, nil
+}
+
+// RemoveWarning implements Store. No row of the guild matched is
+// ErrNotFound.
+func (p *Postgres) RemoveWarning(ctx context.Context, guildID string, id int64) (Warning, error) {
+	w, err := scanWarning(p.db.QueryRowContext(ctx,
+		`DELETE FROM warnings WHERE guild_id = $1 AND id = $2 RETURNING `+warningColumns, guildID, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Warning{}, fmt.Errorf("remove warning %d in guild %q: %w", id, guildID, ErrNotFound)
+	}
+	if err != nil {
+		return Warning{}, fmt.Errorf("remove warning %d in guild %q: %w", id, guildID, err)
+	}
+	return w, nil
 }
 
 // SavePagedList implements Store.
