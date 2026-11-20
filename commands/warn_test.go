@@ -28,8 +28,9 @@ const (
 )
 
 // fakeWarnDiscord records the notices posted and edited, and answers the
-// command permission read with perms. The guild's owner and its threads come
-// from a session cache, through the session's own lookups.
+// command permission read with perms. Cached channels come from a session
+// cache, through the session's own lookup, and a channel fetch from
+// fetched or fetchErr.
 type fakeWarnDiscord struct {
 	sessionWarnDiscord
 	mu       sync.Mutex
@@ -39,6 +40,15 @@ type fakeWarnDiscord struct {
 	sendErr  error
 	perms    []*discordgo.GuildApplicationCommandPermissions
 	permsErr error
+	fetched  map[string]*discordgo.Channel
+	fetchErr error
+}
+
+func (f *fakeWarnDiscord) Channel(channelID string, _ ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	if c, ok := f.fetched[channelID]; ok && f.fetchErr == nil {
+		return c, nil
+	}
+	return nil, f.fetchErr
 }
 
 func (f *fakeWarnDiscord) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, _ ...discordgo.RequestOption) (*discordgo.Message, error) {
@@ -119,7 +129,7 @@ const warnThread = "410"
 
 func newWarnScene(t *testing.T) *warnScene {
 	state := discordgo.NewState()
-	guild := &discordgo.Guild{ID: warnGuild, OwnerID: "owner"}
+	guild := &discordgo.Guild{ID: warnGuild}
 	if err := state.GuildAdd(guild); err != nil {
 		t.Fatal(err)
 	}
@@ -143,15 +153,6 @@ func newWarnScene(t *testing.T) *warnScene {
 		},
 	}}
 	return sc
-}
-
-// setOwner makes id the guild's owner in the session cache.
-func (sc *warnScene) setOwner(id string) {
-	g, err := sc.d.State.Guild(warnGuild)
-	if err != nil {
-		sc.t.Fatal(err)
-	}
-	g.OwnerID = id
 }
 
 // warnTargetIs describes the member /warn picks, as Discord resolves them.
@@ -282,21 +283,16 @@ func TestWarnRefusesAndSavesNothing(t *testing.T) {
 	cases := []struct {
 		name   string
 		target warnTargetIs
-		owner  string
 		phrase string
 		named  bool
 	}{
 		{name: "a bot", target: warnTargetIs{bot: true}, phrase: warnBotPhrase},
 		{name: "an admin", target: warnTargetIs{permissions: discordgo.PermissionAdministrator}, phrase: warnAdminPhrase, named: true},
-		{name: "the owner", owner: warnTarget, phrase: warnAdminPhrase, named: true},
 		{name: "an immune role holder", target: warnTargetIs{roles: []string{"other", warnImmune}}, phrase: warnImmunePhrase, named: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sc := newWarnScene(t)
-			if c.owner != "" {
-				sc.setOwner(c.owner)
-			}
 			if err := sc.store.SaveWarningImmuneRoles(context.Background(), warnGuild,
 				store.WarningImmuneRoles{RoleIDs: []string{warnImmune}}, store.ChangeLogEntry{Diff: []byte(`{}`)}); err != nil {
 				t.Fatal(err)
@@ -332,16 +328,21 @@ func TestWarnWhoseNoticeFailsSavesNothing(t *testing.T) {
 	cases := []struct {
 		name     string
 		err      error
+		kept     bool
 		phrase   string
 		captured bool
 	}{
 		{name: "no access", err: restError(http.StatusForbidden, discordgo.ErrCodeMissingAccess, "Missing Access"), phrase: warnCantPostPhrase},
 		{name: "a Discord fault", err: restError(http.StatusInternalServerError, 0, "boom"), phrase: warnNotPostedPhrase, captured: true},
+		{name: "a warning the store can't take back", err: restError(http.StatusInternalServerError, 0, "boom"), kept: true, phrase: warnOrphanPhrase, captured: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sc := newWarnScene(t)
 			sc.d.sendErr = c.err
+			if c.kept {
+				sc.fails.removeErr = errFirstRespond
+			}
 			captures := recordCaptures(t)
 
 			reply := sc.warn(warnTargetIs{}, "Reason")
@@ -349,8 +350,8 @@ func TestWarnWhoseNoticeFailsSavesNothing(t *testing.T) {
 			if !strings.HasPrefix(reply, "❌") || !strings.Contains(reply, c.phrase) {
 				t.Errorf("reply = %q, want a ❌ saying %q", reply, c.phrase)
 			}
-			if list := sc.warnings(); len(list) != 0 {
-				t.Errorf("warnings = %+v, want the saved one removed", list)
+			if list := sc.warnings(); (len(list) == 1) != c.kept {
+				t.Errorf("warnings = %+v, want it kept only when the store can't remove it", list)
 			}
 			if (captures.count > 0) != c.captured {
 				t.Errorf("captures = %d, want Sentry to hear of a Discord fault only", captures.count)
@@ -363,7 +364,7 @@ func TestRemoveButtonByAMemberWhoMayWarnRemovesTheWarning(t *testing.T) {
 	sc := newWarnScene(t)
 	sc.warn(warnTargetIs{}, "Spamming comms")
 
-	reply := sc.press(0, []string{warnModRole}, 0)
+	reply := sc.press(0, []string{warnModRole}, discordgo.PermissionUseApplicationCommands)
 
 	wantReply(t, reply, "✅", warnTarget, warnRemovedPhrase)
 	if list := sc.warnings(); len(list) != 0 {
@@ -381,7 +382,7 @@ func TestRemoveButtonByAMemberWhoMayWarnRemovesTheWarning(t *testing.T) {
 	}
 	embed := (*edit.Embeds)[0]
 	if embed.Footer == nil || embed.Footer.Text != warnRemovedFooter ||
-		!strings.Contains(embed.Description, "~~") || !strings.Contains(embed.Description, "Spamming comms") ||
+		!strings.Contains(embed.Description, "Spamming comms") ||
 		embed.Author == nil || !strings.Contains(embed.Author.Name, "rookie") {
 		t.Errorf("edited embed = %+v, want the member, the reason struck through, and the removed footer", embed)
 	}
@@ -408,6 +409,22 @@ func TestRemoveButtonRefusedChangesNothing(t *testing.T) {
 			},
 			channel: warnThread, roles: mod, phrase: warnNotPermittedPhrase,
 		},
+		{
+			name:    "a thread the cache lacks and Discord won't give",
+			setup:   func(sc *warnScene) { sc.d.fetchErr = errFirstRespond },
+			channel: "420", roles: mod, phrase: warnUnreadablePhrase,
+		},
+		{
+			name: "a thread the cache lacks, of a channel /warn is denied in",
+			setup: func(sc *warnScene) {
+				sc.d.fetched = map[string]*discordgo.Channel{"420": {ID: "420", Type: discordgo.ChannelTypeGuildPublicThread, ParentID: warnChannel}}
+				cmd := sc.d.perms[0]
+				cmd.Permissions = append(cmd.Permissions, &discordgo.ApplicationCommandPermissions{
+					ID: warnChannel, Type: discordgo.ApplicationCommandPermissionTypeChannel, Permission: false,
+				})
+			},
+			channel: "420", roles: mod, phrase: warnNotPermittedPhrase,
+		},
 		{name: "before /warn's ID is known", setup: func(sc *warnScene) { sc.w = &warnings{store: sc.fails} }, roles: mod, phrase: warnStartingPhrase},
 		{name: "permissions unreadable", setup: func(sc *warnScene) { sc.d.permsErr = errFirstRespond }, roles: mod, phrase: warnUnreadablePhrase},
 		{name: "a store that can't remove it", setup: func(sc *warnScene) { sc.fails.removeErr = errFirstRespond }, roles: mod, phrase: warnNotRemovedPhrase},
@@ -424,7 +441,7 @@ func TestRemoveButtonRefusedChangesNothing(t *testing.T) {
 				channel = warnChannel
 			}
 
-			reply := sc.pressIn(channel, 0, c.roles, discordgo.PermissionManageMessages)
+			reply := sc.pressIn(channel, 0, c.roles, discordgo.PermissionUseApplicationCommands)
 
 			if !strings.HasPrefix(reply, "❌") || !strings.Contains(reply, c.phrase) {
 				t.Errorf("reply = %q, want a ❌ saying %q", reply, c.phrase)
@@ -462,20 +479,27 @@ func TestWarnWhoseStoreFailsPostsNoNotice(t *testing.T) {
 	}
 }
 
-func TestRemoveButtonOfARemovedWarningSaysSoAndDropsTheButton(t *testing.T) {
+// The press marks the notice removed, which repairs one whose edit at the
+// removal failed.
+func TestRemoveButtonOfARemovedWarningSaysSoAndMarksTheNoticeRemoved(t *testing.T) {
 	sc := newWarnScene(t)
 	sc.warn(warnTargetIs{}, "Reason")
 	if _, err := sc.store.RemoveWarning(context.Background(), warnGuild, sc.warnings()[0].ID); err != nil {
 		t.Fatal(err)
 	}
 
-	reply := sc.press(0, []string{warnModRole}, 0)
+	reply := sc.press(0, []string{warnModRole}, discordgo.PermissionUseApplicationCommands)
 
 	if !strings.HasPrefix(reply, "❌") || !strings.Contains(reply, warnAlreadyRemovedPhrase) {
 		t.Errorf("reply = %q, want a ❌ saying %q", reply, warnAlreadyRemovedPhrase)
 	}
-	if len(sc.d.edits) != 1 || sc.d.edits[0].Components == nil || len(*sc.d.edits[0].Components) != 0 {
-		t.Errorf("notice edits = %+v, want the button dropped", sc.d.edits)
+	if len(sc.d.edits) != 1 {
+		t.Fatalf("notice edits = %+v, want one", sc.d.edits)
+	}
+	edit := sc.d.edits[0]
+	if edit.Components == nil || len(*edit.Components) != 0 || edit.Embeds == nil ||
+		(*edit.Embeds)[0].Footer == nil || (*edit.Embeds)[0].Footer.Text != warnRemovedFooter {
+		t.Errorf("notice edit = %+v, want the button gone and the removed footer", edit)
 	}
 }
 

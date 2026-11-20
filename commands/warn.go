@@ -41,6 +41,7 @@ const (
 	warnImmunePhrase         = "holds a role that is immune to warnings"
 	warnCantPostPhrase       = "can't post in this channel"
 	warnNotPostedPhrase      = "Couldn't post the warning"
+	warnOrphanPhrase         = "The warning may still show in /" + infractionsCommandName + "."
 	warnNotSavedPhrase       = "Couldn't save the warning"
 	warnUnreadablePhrase     = "Couldn't read"
 	warnedPhrase             = "Warned"
@@ -48,6 +49,7 @@ const (
 	warnStartingPhrase       = "Cavbot2 is still starting."
 	warnAlreadyRemovedPhrase = "That warning was already removed."
 	warnRemovedPhrase        = "Removed the warning for"
+	warnNoticeStalePhrase    = "The notice didn't update."
 	warnNotRemovedPhrase     = "Couldn't remove the warning"
 	warnStaleButtonPhrase    = "This button no longer does anything."
 	noWarningsPhrase         = "has no warnings."
@@ -70,33 +72,51 @@ type warnDiscord interface {
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	ChannelMessageEditComplex(m *discordgo.MessageEdit, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	GuildApplicationCommandsPermissions(appID, guildID string, options ...discordgo.RequestOption) ([]*discordgo.GuildApplicationCommandPermissions, error)
-	// guildOwner is the guild's owner, or "" when the cache lacks the guild.
-	guildOwner(guildID string) string
-	// commandChannel is the channel whose command permissions apply in
-	// channelID: a thread's parent, or the channel itself.
-	commandChannel(channelID string) string
+	Channel(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
+	// cachedChannel is the type and parent of a channel or thread in the
+	// session's cache, ok false when the cache lacks it.
+	cachedChannel(guildID, channelID string) (kind discordgo.ChannelType, parentID string, ok bool)
 }
 
 type sessionWarnDiscord struct{ *discordgo.Session }
 
-func (s sessionWarnDiscord) guildOwner(guildID string) string {
-	if s.State == nil {
-		return ""
+// cachedChannel copies the fields under State.RLock: the gateway handlers
+// overwrite a cached channel in place (GuildData in temp_vc.go).
+func (s sessionWarnDiscord) cachedChannel(guildID, channelID string) (discordgo.ChannelType, string, bool) {
+	st := s.State
+	if st == nil {
+		return 0, "", false
 	}
-	if g, err := s.State.Guild(guildID); err == nil {
-		return g.OwnerID
+	st.RLock()
+	defer st.RUnlock()
+	for _, g := range st.Guilds {
+		if g.ID != guildID {
+			continue
+		}
+		for _, c := range slices.Concat(g.Channels, g.Threads) {
+			if c.ID == channelID {
+				return c.Type, c.ParentID, true
+			}
+		}
 	}
-	return ""
+	return 0, "", false
 }
 
-func (s sessionWarnDiscord) commandChannel(channelID string) string {
-	if s.State == nil {
-		return channelID
+// commandChannel is the channel whose command permissions apply in
+// channelID: a thread's parent, or the channel itself.
+func commandChannel(d warnDiscord, guildID, channelID string) (string, error) {
+	kind, parentID, ok := d.cachedChannel(guildID, channelID)
+	if !ok {
+		c, err := d.Channel(channelID)
+		if err != nil {
+			return "", err
+		}
+		kind, parentID = c.Type, c.ParentID
 	}
-	if c, err := s.State.Channel(channelID); err == nil && c.IsThread() {
-		return c.ParentID
+	if (&discordgo.Channel{Type: kind}).IsThread() {
+		return parentID, nil
 	}
-	return channelID
+	return channelID, nil
 }
 
 // warnings is the state /warn's button reads: the store, and /warn's
@@ -164,13 +184,12 @@ func runWarn(r utils.InteractionResponder, d warnDiscord, w *warnings, interacti
 	guildID := interaction.GuildID
 
 	user, member := resolvedTarget(interaction, target)
-	isAdmin := target == d.guildOwner(guildID) ||
-		member != nil && member.Permissions&discordgo.PermissionAdministrator != 0
+	// Discord resolves the owner with every permission, Administrator too.
 	switch {
 	case user.Bot:
 		refuse(r, interaction, "❌ "+warnBotPhrase)
 		return
-	case isAdmin:
+	case member != nil && member.Permissions&discordgo.PermissionAdministrator != 0:
 		refuse(r, interaction, "❌ "+mention(target)+" "+warnAdminPhrase+", so they can't be warned.")
 		return
 	}
@@ -211,16 +230,22 @@ func runWarn(r utils.InteractionResponder, d warnDiscord, w *warnings, interacti
 	ctx, cancel = context.WithTimeout(context.Background(), warnStoreTimeout)
 	defer cancel()
 	if err != nil {
-		if _, rmErr := w.store.RemoveWarning(ctx, guildID, warning.ID); rmErr != nil {
-			captureError("Warning kept without a notice", rmErr, "guild_id", guildID, "warning_id", warning.ID)
-		}
-		if classifyDiscordError(err).MissingPermissions {
+		_, rmErr := w.store.RemoveWarning(ctx, guildID, warning.ID)
+		noAccess := classifyDiscordError(err).MissingPermissions
+		if noAccess {
 			utils.Warn("Warn refused, no access to post in the channel", "channel_id", interaction.ChannelID, "error", err)
-			refuse(r, interaction, "❌ Cavbot2 "+warnCantPostPhrase+", so nothing was saved.")
-			return
+		} else {
+			captureError("Warning notice not posted", err, "guild_id", guildID, "channel_id", interaction.ChannelID)
 		}
-		captureError("Warning notice not posted", err, "guild_id", guildID, "channel_id", interaction.ChannelID)
-		replyError(r, interaction, "❌ "+warnNotPostedPhrase+" notice, so nothing was saved. Try again in a moment.")
+		switch {
+		case rmErr != nil:
+			captureError("Warning kept without a notice", rmErr, "guild_id", guildID, "warning_id", warning.ID)
+			replyError(r, interaction, "❌ "+warnNotPostedPhrase+" notice. "+warnOrphanPhrase)
+		case noAccess:
+			refuse(r, interaction, "❌ Cavbot2 "+warnCantPostPhrase+", so nothing was saved.")
+		default:
+			replyError(r, interaction, "❌ "+warnNotPostedPhrase+" notice, so nothing was saved. Try again in a moment.")
+		}
 		return
 	}
 	// The notice stands either way. Without its message ID /infractions
@@ -322,7 +347,8 @@ func runWarnRemove(r utils.InteractionResponder, d warnDiscord, w *warnings, int
 	removed, err := w.store.RemoveWarning(ctx, guildID, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		editWarnNotice(d, interaction, &discordgo.MessageEdit{Components: &[]discordgo.MessageComponent{}})
+		// The edit repairs a notice whose edit at the removal failed.
+		editWarnNotice(d, interaction)
 		editNoticeReply(r, interaction, "❌ "+warnAlreadyRemovedPhrase)
 		return
 	case err != nil:
@@ -331,21 +357,12 @@ func runWarnRemove(r utils.InteractionResponder, d warnDiscord, w *warnings, int
 		return
 	}
 
-	var author *discordgo.MessageEmbedAuthor
-	if m := interaction.Message; m != nil && len(m.Embeds) > 0 {
-		author = m.Embeds[0].Author
-	}
-	editWarnNotice(d, interaction, &discordgo.MessageEdit{
-		Embeds: &[]*discordgo.MessageEmbed{{
-			Color:       warnRemovedColor,
-			Author:      author,
-			Description: "~~**Reason:** " + removed.Reason + "~~",
-			Footer:      &discordgo.MessageEmbedFooter{Text: warnRemovedFooter},
-		}},
-		Components: &[]discordgo.MessageComponent{},
-	})
 	utils.Info("Warning removed", "warning_id", id, "member_id", removed.MemberID, "discord_id", discordID)
-	editNoticeReply(r, interaction, "✅ "+warnRemovedPhrase+" "+mention(removed.MemberID)+".")
+	reply := "✅ " + warnRemovedPhrase + " " + mention(removed.MemberID) + "."
+	if !editWarnNotice(d, interaction) {
+		reply += " " + warnNoticeStalePhrase + " Press its button again to update it."
+	}
+	editNoticeReply(r, interaction, reply)
 	utils.Info("✨ Done!", "command", warnCommandName)
 }
 
@@ -372,31 +389,58 @@ func mayRemoveWarning(d warnDiscord, w *warnings, interaction *discordgo.Interac
 			app = p.Permissions
 		}
 	}
-	u := commandUser{guildID: interaction.GuildID, channelID: d.commandChannel(interaction.ChannelID)}
+	channelID, err := commandChannel(d, interaction.GuildID, interaction.ChannelID)
+	if err != nil {
+		captureError("Channel unreadable, warning removal refused", err, "guild_id", interaction.GuildID, "channel_id", interaction.ChannelID)
+		return "❌ " + warnUnreadablePhrase + " this channel, so nothing changed. Try again in a moment.", false
+	}
+	u := commandUser{guildID: interaction.GuildID, channelID: channelID}
 	if interaction.Member != nil {
 		u.roleIDs, u.permissions = interaction.Member.Roles, interaction.Member.Permissions
 		if interaction.Member.User != nil {
 			u.userID = interaction.Member.User.ID
 		}
 	}
-	// /warn sets no default member permissions.
-	if !mayUseCommand(cmd, app, nil, u) {
+	if !mayUseCommand(cmd, app, u) {
 		return "❌ " + warnNotPermittedPhrase, false
 	}
 	return "", true
 }
 
-// editWarnNotice edits the notice the pressed button sits on. A failed edit
-// leaves the notice as it was, and the removal stands.
-func editWarnNotice(d warnDiscord, interaction *discordgo.InteractionCreate, edit *discordgo.MessageEdit) {
-	if interaction.Message == nil {
-		return
+// editWarnNotice edits the notice the pressed button sits on to the removed
+// state, built from the notice itself, and reports whether Discord took the
+// edit. A notice with no embed only loses its button.
+func editWarnNotice(d warnDiscord, interaction *discordgo.InteractionCreate) bool {
+	m := interaction.Message
+	if m == nil {
+		return false
 	}
-	edit.ID, edit.Channel = interaction.Message.ID, interaction.ChannelID
-	edit.AllowedMentions = noMentions()
+	edit := &discordgo.MessageEdit{
+		ID:              m.ID,
+		Channel:         interaction.ChannelID,
+		Components:      &[]discordgo.MessageComponent{},
+		AllowedMentions: noMentions(),
+	}
+	if len(m.Embeds) > 0 {
+		notice := m.Embeds[0]
+		removed := &discordgo.MessageEmbed{
+			Color:       warnRemovedColor,
+			Description: notice.Description,
+			Footer:      &discordgo.MessageEmbedFooter{Text: warnRemovedFooter},
+		}
+		if a := notice.Author; a != nil {
+			removed.Author = &discordgo.MessageEmbedAuthor{Name: a.Name, URL: a.URL, IconURL: a.IconURL}
+		}
+		if !strings.HasPrefix(removed.Description, "~~") || !strings.HasSuffix(removed.Description, "~~") {
+			removed.Description = "~~" + removed.Description + "~~"
+		}
+		edit.Embeds = &[]*discordgo.MessageEmbed{removed}
+	}
 	if _, err := d.ChannelMessageEditComplex(edit); err != nil {
-		captureError("Warning notice not edited", err, "guild_id", interaction.GuildID, "message_id", interaction.Message.ID)
+		captureError("Warning notice not edited", err, "guild_id", interaction.GuildID, "message_id", m.ID)
+		return false
 	}
+	return true
 }
 
 // Infractions declares /infractions over the bot store, nil on a host

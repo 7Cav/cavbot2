@@ -336,14 +336,14 @@ The bot replaces MEE6's `/warn` and `/infractions` (#971).
 A record that a member broke a rule, with its reason, given with `/warn`.
 The bot keeps it and posts a public notice in the channel it was given in.
 A warning does nothing else to the member. Removing it deletes the record
-and marks the notice removed.
+and marks the notice removed. `/warn` refuses bots, the server owner and
+members with Administrator too.
 _Avoid_: infraction (MEE6's word, kept only in command and button names),
 strike.
 
 **Immune role**:
 A role whose holders `/warn` refuses, set by a panel admin in the Settings
-page's Warnings section. Bots, the server owner and members with
-Administrator are always immune.
+page's Warnings section.
 _Avoid_: protected role, exempt role.
 
 ## Temporary voice channels

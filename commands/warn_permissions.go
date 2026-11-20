@@ -10,16 +10,21 @@ type commandUser struct {
 	permissions                int64
 }
 
-// mayUseCommand reports whether Discord would let u run a command, from the
-// command's own permission overrides, the app-level ones and the command's
-// default_member_permissions. Discord applies these to the command itself but
+// mayUseCommand reports whether Discord would let u run a command that sets
+// no default member permissions, from the command's own permission overrides
+// and the app-level ones. Discord applies these to the command itself but
 // not to a button a command posted, so the button checks them by hand.
 // Rules: Discord's "Commands Permission System" flowchart,
 // https://github.com/discord/discord-api-docs/blob/main/images/new-permissions-flowchart.svg
 // and https://docs.discord.com/developers/interactions/application-commands#permissions
-func mayUseCommand(cmd, app []*discordgo.ApplicationCommandPermissions, defaultPerms *int64, u commandUser) bool {
+func mayUseCommand(cmd, app []*discordgo.ApplicationCommandPermissions, u commandUser) bool {
 	if u.permissions&discordgo.PermissionAdministrator != 0 {
 		return true
+	}
+	// Discord runs no command in a channel where the member lacks Use
+	// Application Commands.
+	if u.permissions&discordgo.PermissionUseApplicationCommands == 0 {
+		return false
 	}
 	allChannels, _ := discordgo.GuildAllChannelsID(u.guildID)
 	allowed, decided := channelOverride(cmd, u.channelID, allChannels)
@@ -29,21 +34,11 @@ func mayUseCommand(cmd, app []*discordgo.ApplicationCommandPermissions, defaultP
 	if decided && !allowed {
 		return false
 	}
-	// A command-level allow lets the member run it outright. An app-level
-	// allow still leaves default_member_permissions to pass.
 	if allowed, decided := memberOverride(cmd, u); decided {
 		return allowed
 	}
-	if allowed, decided := memberOverride(app, u); decided && !allowed {
-		return false
-	}
-	switch {
-	case defaultPerms == nil:
-		return true
-	case *defaultPerms == 0:
-		return false
-	}
-	return u.permissions&*defaultPerms == *defaultPerms
+	allowed, decided = memberOverride(app, u)
+	return allowed || !decided
 }
 
 // channelOverride is the override for channelID among perms, or failing
