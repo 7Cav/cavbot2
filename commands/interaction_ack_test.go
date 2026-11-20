@@ -173,6 +173,8 @@ func ackRunOptions() map[string][]*discordgo.ApplicationCommandInteractionDataOp
 		recordCommandName:          {{Name: "stop", Type: discordgo.ApplicationCommandOptionSubCommand}},
 		wingedAviatorCommandName: {{Name: "add", Type: discordgo.ApplicationCommandOptionSubCommand,
 			Options: []*discordgo.ApplicationCommandInteractionDataOption{userOption("member", "123456789012345678"), stringOption("role", "Arma")}}},
+		warnCommandName:        {userOption("member", "123456789012345678"), stringOption("reason", "Spamming")},
+		infractionsCommandName: {userOption("member", "123456789012345678")},
 	}
 }
 

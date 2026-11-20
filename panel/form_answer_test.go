@@ -359,6 +359,14 @@ var formAnswers = []formAnswer{
 			assertRedirect(t, res, settingsPath)
 			return stale.send(w.b, func(v url.Values) { v.Set(fieldFoxholeGroup, "401") })
 		}},
+	{name: "a stale save of the warning immune roles", route: "POST /warning-immune-roles", status: http.StatusConflict, shown: http.StatusOK,
+		send: func(t *testing.T, w *testWorld) (string, *http.Response) {
+			stale := formOn(t, w.b, settingsPath, "/warning-immune-roles", "")
+			other := secondBrowser(t, w)
+			_, res := formOn(t, other, settingsPath, "/warning-immune-roles", "").send(other, func(v url.Values) { v.Set(fieldWarningImmuneRoles, "role-mp") })
+			assertRedirect(t, res, settingsPath)
+			return stale.send(w.b, func(v url.Values) { v.Set(fieldWarningImmuneRoles, "role-hq") })
+		}},
 	{name: "a stale save of the rank roles", route: "POST /rank-roles", status: http.StatusConflict, shown: http.StatusOK,
 		send: func(t *testing.T, w *testWorld) (string, *http.Response) {
 			stale := formOn(t, w.b, settingsPath, "/rank-roles", "")

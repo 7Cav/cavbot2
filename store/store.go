@@ -2,8 +2,8 @@
 // spawned channels the runtime tracks across a restart, the change log of
 // every panel save, and the Foxhole page's notes and approvals, with a
 // change log of their own that also holds each Foxhole action's report, the
-// winged aviators, and the saved pages of each long /loa or /awol list for
-// 30 days. Postgres in production (postgres.go), an in-memory
+// winged aviators, the warnings /warn gives and the roles immune to them, and
+// the saved pages of each long /loa or /awol list for 30 days. Postgres in production (postgres.go), an in-memory
 // Fake for other packages' tests (fake.go).
 //
 // The Discord metrics rows and weekly totals (metrics.go) are methods on
@@ -27,17 +27,19 @@ import (
 
 // ErrNotFound is returned by GetHub, SaveHub and RemoveHub when no hub has
 // the requested ID, by SetSpawnedChannelLock when no row has the channel,
-// and by PagedListPage when no list has the key or no page the index.
+// by SetWarningNotice and RemoveWarning when no warning of the guild has the
+// ID, and by PagedListPage when no list has the key or no page the index.
 // Compare with errors.Is.
 var ErrNotFound = errors.New("store: not found")
 
 // ErrStale is returned by a combined write whose record is not as the
 // caller read it (#373): SaveHub of a hub whose row is at another version,
 // or of a new hub on a channel a hub already stands on,
-// SaveGuildModeratorRoles, SaveRecordingRoles, SaveAORoles, SaveForumGroups or
-// SaveRankRoles of a set whose row is at another version, and SaveFoxholeNote over a note that isn't the one the
-// saver loaded. The write lands neither the settings nor the entry. Compare
-// with errors.Is.
+// SaveGuildModeratorRoles, SaveRecordingRoles, SaveAORoles, SaveForumGroups,
+// SaveWarningImmuneRoles or SaveRankRoles of a set whose row is at another
+// version, and SaveFoxholeNote over a note that isn't the one the saver
+// loaded. The write lands neither the settings nor the entry. Compare with
+// errors.Is.
 var ErrStale = errors.New("store: the record changed since it was read")
 
 // PermissionSource is the per-hub setting that chooses what a spawned channel
@@ -144,6 +146,35 @@ type ForumGroups struct {
 // defaultFoxholeGroupID is the forum's Foxhole group, which a guild with no
 // forum groups saved reads back.
 const defaultFoxholeGroupID = 323
+
+// WarningImmuneRoles is a guild's warning immune roles, the roles whose
+// holders /warn refuses to warn, with the version of the row that holds
+// them.
+type WarningImmuneRoles struct {
+	// RoleIDs is a set, under the same rule as Hub.ModeratorRoleIDs.
+	RoleIDs []string
+	// Version counts the saves of the set that took effect, as
+	// RecordingRoles.Version does. A guild with no row is at version 0.
+	Version int64
+}
+
+// Warning is one row of the warnings table (#971): one /warn of a member.
+type Warning struct {
+	// ID is the surrogate key, set by the store.
+	ID          int64
+	GuildID     string
+	MemberID    string
+	ModeratorID string
+	// ChannelID is the channel the warning was given in, where its public
+	// notice goes.
+	ChannelID string
+	// MessageID is the public notice's message ID, empty until
+	// SetWarningNotice records it.
+	MessageID string
+	Reason    string
+	// CreatedAt is set by the store, never by the caller.
+	CreatedAt time.Time
+}
 
 // RankRoles is a guild's rank roles (GLOSSARY.md, Rank role): the role that
 // counts as each rank on the rank ladder, saved for the whole ladder at
@@ -314,6 +345,8 @@ const (
 	ChangeAORoles ChangeAction = "ao_roles"
 	// ChangeForumGroups is a save of the forum groups.
 	ChangeForumGroups ChangeAction = "forum_groups"
+	// ChangeWarningImmuneRoles is a save of the warning immune roles.
+	ChangeWarningImmuneRoles ChangeAction = "warning_immune_roles"
 	// ChangeRankRoles is a save of the rank roles.
 	ChangeRankRoles ChangeAction = "rank_roles"
 	// ChangeNote is a save of one member's note on the Foxhole page. Its
@@ -407,8 +440,8 @@ type ChangeLogEntry struct {
 	// ID is the surrogate key, set by the store.
 	ID int64
 	// HubID is the hub the save was about, or zero for a save about no hub:
-	// the guild-wide moderator roles, the recording roles and the rank
-	// roles. A hub's
+	// the guild-wide moderator roles, the recording, AO, warning immune and
+	// rank roles, and the forum groups. A hub's
 	// removal references the hub it removed, and a removed hub's entries
 	// keep their reference, so the reference can name a hub row that no
 	// longer exists (#579). It never names another hub, since no hub ID is
@@ -452,8 +485,9 @@ type MemberNames struct {
 // it.
 //
 // A panel save is one call: SaveHub, RemoveHub, SaveGuildModeratorRoles,
-// SaveRecordingRoles, SaveAORoles, SaveForumGroups or SaveRankRoles writes the save's settings and its
-// change log entry in one transaction, so both land or neither does, and no method writes either
+// SaveRecordingRoles, SaveAORoles, SaveForumGroups, SaveWarningImmuneRoles or
+// SaveRankRoles writes the save's settings and its change log entry in one
+// transaction, so both land or neither does, and no method writes either
 // alone (#362).
 // The transaction never leaves the store. The pool holds two connections,
 // and a transaction handed to panel code would hold one of them while that
@@ -570,6 +604,19 @@ type Store interface {
 	// first in append order.
 	ListForumGroupChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
 
+	// GetWarningImmuneRoles returns the warning immune roles with their
+	// version. A guild with no row reads back as an empty set at version 0,
+	// with no error.
+	GetWarningImmuneRoles(ctx context.Context, guildID string) (WarningImmuneRoles, error)
+	// SaveWarningImmuneRoles replaces the warning immune role IDs with
+	// roles.RoleIDs and appends the save's change log entry together, under
+	// SaveRecordingRoles' rules.
+	SaveWarningImmuneRoles(ctx context.Context, guildID string, roles WarningImmuneRoles, entry ChangeLogEntry) error
+	// ListWarningImmuneRoleChanges returns at most limit warning immune roles
+	// saves, the entries with action ChangeWarningImmuneRoles that reference
+	// no hub, newest first in append order.
+	ListWarningImmuneRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error)
+
 	// GetRankRoles returns the rank roles with their version. A guild with
 	// no row reads back as no roles at version 0, with no error.
 	GetRankRoles(ctx context.Context, guildID string) (RankRoles, error)
@@ -680,6 +727,20 @@ type Store interface {
 	// RemoveWingedAviator ends the member's status for the guild's role.
 	// Removing one not listed is not an error.
 	RemoveWingedAviator(ctx context.Context, guildID, roleID, userID string) error
+
+	// AddWarning stores a warning and returns it with ID and CreatedAt set.
+	// The caller's ID and CreatedAt are ignored.
+	AddWarning(ctx context.Context, w Warning) (Warning, error)
+	// SetWarningNotice records the message ID of the warning's public
+	// notice. ErrNotFound when no warning of the guild has the ID.
+	SetWarningNotice(ctx context.Context, guildID string, id int64, messageID string) error
+	// ListWarnings returns every warning of the member in the guild, newest
+	// first, and an empty slice when they have none.
+	ListWarnings(ctx context.Context, guildID, memberID string) ([]Warning, error)
+	// RemoveWarning deletes the warning with the ID given and returns it as
+	// it was. ErrNotFound when no warning of the guild has the ID, so one of
+	// another guild is left in place.
+	RemoveWarning(ctx context.Context, guildID string, id int64) (Warning, error)
 
 	// SavePagedList saves a run's pages and returns the key that reads them
 	// back. The key is random, so no one can guess another run's.

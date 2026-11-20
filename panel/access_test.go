@@ -160,6 +160,11 @@ var settingsSaveCases = []struct {
 		form: func(t *testing.T, st store.Store) url.Values { return aoRolesForm(t, st, "role-hq") },
 	},
 	{
+		name: "warning immune roles",
+		path: func(*testing.T, store.Store) string { return "/warning-immune-roles" },
+		form: func(t *testing.T, st store.Store) url.Values { return warningImmuneRolesForm(t, st, "role-hq") },
+	},
+	{
 		name: "forum groups",
 		path: func(*testing.T, store.Store) string { return "/forum-groups" },
 		form: func(t *testing.T, st store.Store) url.Values { return forumGroupsForm(t, st, "400", "") },

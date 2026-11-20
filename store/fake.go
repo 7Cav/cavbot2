@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,6 +45,9 @@ type Fake struct {
 	aoRoles map[string]AORoles
 	// forumGroups holds each guild's forum groups and their version.
 	forumGroups map[string]ForumGroups
+	// warningImmuneRoles holds each guild's warning immune roles and their
+	// version.
+	warningImmuneRoles map[string]WarningImmuneRoles
 	// rankRoles holds each guild's rank roles and their version.
 	rankRoles map[string]RankRoles
 	// changes is the hub page's change log, and foxholeChanges the Foxhole
@@ -64,6 +68,10 @@ type Fake struct {
 	aviators map[aviatorRole]map[string]bool
 	// pagedLists holds each saved list by its key.
 	pagedLists map[string]PagedList
+	// warnings holds every warning by ID, and nextWarningID the ID the next
+	// add gets.
+	warnings      map[int64]Warning
+	nextWarningID int64
 	// holdIn is the zone HoldTimesIn holds each change log entry's time
 	// in, and nil for the local zone time.Now gives.
 	holdIn *time.Location
@@ -79,22 +87,25 @@ type changeLog struct {
 // NewFake returns an empty Fake.
 func NewFake() *Fake {
 	return &Fake{
-		nextID:          1,
-		hubs:            make(map[int64]Hub),
-		spawned:         make(map[string]SpawnedChannel),
-		guildRoles:      make(map[string]GuildModeratorRoles),
-		recordingRoles:  make(map[string]RecordingRoles),
-		aoRoles:         make(map[string]AORoles),
-		forumGroups:     make(map[string]ForumGroups),
-		rankRoles:       make(map[string]RankRoles),
-		changes:         changeLog{nextID: 1},
-		foxholeChanges:  changeLog{nextID: 1},
-		members:         make(map[string]map[string]FoxholeRecord),
-		reports:         make(map[int64]bool),
-		recordings:      make(map[int64]Recording),
-		nextRecordingID: 1,
-		aviators:        make(map[aviatorRole]map[string]bool),
-		pagedLists:      make(map[string]PagedList),
+		nextID:             1,
+		hubs:               make(map[int64]Hub),
+		spawned:            make(map[string]SpawnedChannel),
+		guildRoles:         make(map[string]GuildModeratorRoles),
+		recordingRoles:     make(map[string]RecordingRoles),
+		aoRoles:            make(map[string]AORoles),
+		forumGroups:        make(map[string]ForumGroups),
+		warningImmuneRoles: make(map[string]WarningImmuneRoles),
+		rankRoles:          make(map[string]RankRoles),
+		changes:            changeLog{nextID: 1},
+		foxholeChanges:     changeLog{nextID: 1},
+		members:            make(map[string]map[string]FoxholeRecord),
+		reports:            make(map[int64]bool),
+		recordings:         make(map[int64]Recording),
+		nextRecordingID:    1,
+		aviators:           make(map[aviatorRole]map[string]bool),
+		pagedLists:         make(map[string]PagedList),
+		warnings:           make(map[int64]Warning),
+		nextWarningID:      1,
 	}
 }
 
@@ -477,6 +488,34 @@ func (f *Fake) SaveForumGroups(ctx context.Context, guildID string, groups Forum
 	})
 }
 
+// GetWarningImmuneRoles implements Store.
+func (f *Fake) GetWarningImmuneRoles(ctx context.Context, guildID string) (WarningImmuneRoles, error) {
+	if err := ctx.Err(); err != nil {
+		return WarningImmuneRoles{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	roles := f.warningImmuneRoles[guildID]
+	roles.RoleIDs = slices.Clone(roles.RoleIDs)
+	if roles.RoleIDs == nil {
+		roles.RoleIDs = []string{}
+	}
+	return roles, nil
+}
+
+// SaveWarningImmuneRoles implements Store. A guild with no set stored is at
+// version 0.
+func (f *Fake) SaveWarningImmuneRoles(ctx context.Context, guildID string, roles WarningImmuneRoles, entry ChangeLogEntry) error {
+	return f.writeAllOrNothing(ctx, &entry, func() (int64, error) {
+		current := f.warningImmuneRoles[guildID]
+		if current.Version != roles.Version {
+			return 0, ErrStale
+		}
+		f.warningImmuneRoles[guildID] = WarningImmuneRoles{RoleIDs: slices.Clone(roles.RoleIDs), Version: current.Version + 1}
+		return 0, nil
+	})
+}
+
 // GetRankRoles implements Store.
 func (f *Fake) GetRankRoles(ctx context.Context, guildID string) (RankRoles, error) {
 	if err := ctx.Err(); err != nil {
@@ -612,6 +651,14 @@ func (f *Fake) ListForumGroupChanges(ctx context.Context, limit int) ([]ChangeLo
 		return nil, err
 	}
 	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeForumGroups }), nil
+}
+
+// ListWarningImmuneRoleChanges implements Store.
+func (f *Fake) ListWarningImmuneRoleChanges(ctx context.Context, limit int) ([]ChangeLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.listChanges(&f.changes, limit, func(e ChangeLogEntry) bool { return e.HubID == 0 && e.Action == ChangeWarningImmuneRoles }), nil
 }
 
 // ListRankRoleChanges implements Store.
@@ -979,6 +1026,73 @@ func (f *Fake) RemoveWingedAviator(ctx context.Context, guildID, roleID, userID 
 	defer f.mu.Unlock()
 	delete(f.aviators[aviatorRole{guildID, roleID}], userID)
 	return nil
+}
+
+// AddWarning implements Store.
+func (f *Fake) AddWarning(ctx context.Context, w Warning) (Warning, error) {
+	if err := ctx.Err(); err != nil {
+		return Warning{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	w.ID = f.nextWarningID
+	f.nextWarningID++
+	w.CreatedAt = time.Now()
+	f.warnings[w.ID] = w
+	return w, nil
+}
+
+// SetWarningNotice implements Store.
+func (f *Fake) SetWarningNotice(ctx context.Context, guildID string, id int64, messageID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	w, ok := f.warnings[id]
+	if !ok || w.GuildID != guildID {
+		return ErrNotFound
+	}
+	w.MessageID = messageID
+	f.warnings[id] = w
+	return nil
+}
+
+// ListWarnings implements Store.
+func (f *Fake) ListWarnings(ctx context.Context, guildID, memberID string) ([]Warning, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Warning
+	for _, w := range f.warnings {
+		if w.GuildID == guildID && w.MemberID == memberID {
+			out = append(out, w)
+		}
+	}
+	slices.SortFunc(out, func(a, b Warning) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.ID, a.ID)
+	})
+	return out, nil
+}
+
+// RemoveWarning implements Store.
+func (f *Fake) RemoveWarning(ctx context.Context, guildID string, id int64) (Warning, error) {
+	if err := ctx.Err(); err != nil {
+		return Warning{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	w, ok := f.warnings[id]
+	if !ok || w.GuildID != guildID {
+		return Warning{}, ErrNotFound
+	}
+	delete(f.warnings, id)
+	return w, nil
 }
 
 // SavePagedList implements Store.

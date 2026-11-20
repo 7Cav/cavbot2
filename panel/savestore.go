@@ -166,6 +166,48 @@ func (b boundedStore) ListForumGroupChanges(ctx context.Context, limit int) ([]s
 	return b.store.ListForumGroupChanges(ctx, limit)
 }
 
+func (b boundedStore) GetWarningImmuneRoles(ctx context.Context, guildID string) (store.WarningImmuneRoles, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.GetWarningImmuneRoles(ctx, guildID)
+}
+
+func (b boundedStore) SaveWarningImmuneRoles(ctx context.Context, guildID string, roles store.WarningImmuneRoles, entry store.ChangeLogEntry) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.SaveWarningImmuneRoles(ctx, guildID, roles, entry)
+}
+
+func (b boundedStore) ListWarningImmuneRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ListWarningImmuneRoleChanges(ctx, limit)
+}
+
+func (b boundedStore) AddWarning(ctx context.Context, w store.Warning) (store.Warning, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.AddWarning(ctx, w)
+}
+
+func (b boundedStore) SetWarningNotice(ctx context.Context, guildID string, id int64, messageID string) error {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.SetWarningNotice(ctx, guildID, id, messageID)
+}
+
+func (b boundedStore) ListWarnings(ctx context.Context, guildID, memberID string) ([]store.Warning, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.ListWarnings(ctx, guildID, memberID)
+}
+
+func (b boundedStore) RemoveWarning(ctx context.Context, guildID string, id int64) (store.Warning, error) {
+	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
+	defer cancel()
+	return b.store.RemoveWarning(ctx, guildID, id)
+}
+
 func (b boundedStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
 	ctx, cancel := panelClock.WithTimeout(ctx, b.timeout)
 	defer cancel()

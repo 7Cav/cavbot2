@@ -273,6 +273,41 @@ func (s hookedStore) ListForumGroupChanges(ctx context.Context, limit int) ([]st
 	return s.st.ListForumGroupChanges(ctx, limit)
 }
 
+func (s hookedStore) GetWarningImmuneRoles(ctx context.Context, guildID string) (store.WarningImmuneRoles, error) {
+	s.hook(ctx)
+	return s.st.GetWarningImmuneRoles(ctx, guildID)
+}
+
+func (s hookedStore) SaveWarningImmuneRoles(ctx context.Context, guildID string, roles store.WarningImmuneRoles, entry store.ChangeLogEntry) error {
+	s.hook(ctx)
+	return s.st.SaveWarningImmuneRoles(ctx, guildID, roles, entry)
+}
+
+func (s hookedStore) ListWarningImmuneRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	s.hook(ctx)
+	return s.st.ListWarningImmuneRoleChanges(ctx, limit)
+}
+
+func (s hookedStore) AddWarning(ctx context.Context, w store.Warning) (store.Warning, error) {
+	s.hook(ctx)
+	return s.st.AddWarning(ctx, w)
+}
+
+func (s hookedStore) SetWarningNotice(ctx context.Context, guildID string, id int64, messageID string) error {
+	s.hook(ctx)
+	return s.st.SetWarningNotice(ctx, guildID, id, messageID)
+}
+
+func (s hookedStore) ListWarnings(ctx context.Context, guildID, memberID string) ([]store.Warning, error) {
+	s.hook(ctx)
+	return s.st.ListWarnings(ctx, guildID, memberID)
+}
+
+func (s hookedStore) RemoveWarning(ctx context.Context, guildID string, id int64) (store.Warning, error) {
+	s.hook(ctx)
+	return s.st.RemoveWarning(ctx, guildID, id)
+}
+
 func (s hookedStore) GetRankRoles(ctx context.Context, guildID string) (store.RankRoles, error) {
 	s.hook(ctx)
 	return s.st.GetRankRoles(ctx, guildID)
@@ -507,6 +542,19 @@ func TestSaveTheBrowserLeavesAtItsFirstStoreCallStillTakesEffect(t *testing.T) {
 				return 0
 			},
 			action: store.ChangeForumGroups,
+		},
+		{
+			name:    "warning immune roles",
+			landsOn: settingsPath,
+			path:    func(*testing.T, store.Store) string { return "/warning-immune-roles" },
+			form:    func(t *testing.T, st store.Store) url.Values { return warningImmuneRolesForm(t, st, "role-hq") },
+			checkSaved: func(t *testing.T, st store.Store) int64 {
+				if got := storedWarningImmuneRoles(t, st).RoleIDs; !sameSet(got, []string{"role-hq"}) {
+					t.Errorf("stored warning immune roles = %v, want role-hq alone", got)
+				}
+				return 0
+			},
+			action: store.ChangeWarningImmuneRoles,
 		},
 	}
 	for _, tc := range cases {
@@ -749,6 +797,7 @@ type savedState struct {
 	Recording store.RecordingRoles
 	AO        store.AORoles
 	Forum     store.ForumGroups
+	Immune    store.WarningImmuneRoles
 	Ranks     store.RankRoles
 	Entries   map[int64][]store.ChangeLogEntry
 }
@@ -762,7 +811,8 @@ func readSavedState(t *testing.T, st store.Store) savedState {
 	if err != nil {
 		t.Fatalf("GetGuildModeratorRoles: %v", err)
 	}
-	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st), AO: storedAORoles(t, st), Forum: storedForumGroups(t, st), Ranks: storedRankRoles(t, st),
+	state := savedState{Hubs: hubs, Roles: roles, Recording: storedRecordingRoles(t, st), AO: storedAORoles(t, st), Forum: storedForumGroups(t, st),
+		Immune: storedWarningImmuneRoles(t, st), Ranks: storedRankRoles(t, st),
 		Entries: map[int64][]store.ChangeLogEntry{0: storedChangeLog(t, st, 0)}}
 	for _, h := range hubs {
 		state.Entries[h.ID] = storedChangeLog(t, st, h.ID)

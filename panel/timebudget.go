@@ -179,6 +179,18 @@ func (s pageStore) ListForumGroupChanges(ctx context.Context, limit int) ([]stor
 	})
 }
 
+func (s pageStore) GetWarningImmuneRoles(ctx context.Context, guildID string) (store.WarningImmuneRoles, error) {
+	return timeStoreRead(s.reads, warningImmuneRolesRead, func() (store.WarningImmuneRoles, error) {
+		return s.Store.GetWarningImmuneRoles(ctx, guildID)
+	})
+}
+
+func (s pageStore) ListWarningImmuneRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	return timeStoreRead(s.reads, warningImmuneRoleChangesRead, func() ([]store.ChangeLogEntry, error) {
+		return s.Store.ListWarningImmuneRoleChanges(ctx, limit)
+	})
+}
+
 func (s pageStore) ListChangeLog(ctx context.Context, hubID int64, limit int) ([]store.ChangeLogEntry, error) {
 	return timeStoreRead(s.reads, changeLogRead, func() ([]store.ChangeLogEntry, error) {
 		return s.Store.ListChangeLog(ctx, hubID, limit)

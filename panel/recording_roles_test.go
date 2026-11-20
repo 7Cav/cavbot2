@@ -176,6 +176,11 @@ var roleSetSaves = []roleSetSave{
 			r := storedAORoles(t, st)
 			return r.RoleIDs, r.Version
 		}},
+	{"warning immune roles", "/warning-immune-roles", "warnings", fieldWarningImmuneRoles, warningImmuneRolesForm,
+		func(t *testing.T, st store.Store) ([]string, int64) {
+			r := storedWarningImmuneRoles(t, st)
+			return r.RoleIDs, r.Version
+		}},
 }
 
 // refused checks a refused save of the set: a 4xx, the section's note under
@@ -285,41 +290,48 @@ func TestRecordingRolesSaveKeepsAStoredRoleSinceMadeManaged(t *testing.T) {
 	}
 }
 
-// The section shows its own saves' entries, newest first, with the roles by
-// name, and none of the guild-wide moderator section's.
-func TestRecordingRolesSectionShowsItsOwnSavesNewestFirst(t *testing.T) {
-	w := newTestWorld(t, testHub())
-	signIn(t, w.forum, w.b)
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-mp")), settingsPath)
-	assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-hq")), "/")
-	assertRedirect(t, w.b.postForm("/recording-roles", recordingRolesForm(t, w.st, "role-hq")), settingsPath)
-	// Under no hub, newest first: the second recording roles save, the
-	// moderators save, the first recording roles save.
-	saves := storedChangeLog(t, w.st, 0)
-	if len(saves) != 3 {
-		t.Fatalf("%d entries under no hub, want 3", len(saves))
-	}
-	want := []int64{saves[0].ID, saves[2].ID}
+// Each section shows its own saves' entries, newest first, with the roles
+// by name, and none of the guild-wide moderator section's.
+func TestRoleSetSectionShowsItsOwnSavesNewestFirst(t *testing.T) {
+	for _, tc := range roleSetSaves {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newTestWorld(t, testHub())
+			signIn(t, w.forum, w.b)
+			assertRedirect(t, w.b.postForm(tc.path, tc.form(t, w.st, "role-mp")), settingsPath)
+			assertRedirect(t, w.b.postForm("/moderators", moderatorsForm(t, w.st, "role-hq")), "/")
+			assertRedirect(t, w.b.postForm(tc.path, tc.form(t, w.st, "role-hq")), settingsPath)
+			// Under no hub, newest first: the section's second save, the
+			// moderators save, the section's first save.
+			saves := storedChangeLog(t, w.st, 0)
+			if len(saves) != 3 {
+				t.Fatalf("%d entries under no hub, want 3", len(saves))
+			}
+			want := []int64{saves[0].ID, saves[2].ID}
 
-	res := w.b.get(settingsPath)
+			res := w.b.get(settingsPath)
 
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s status = %d, want 200", settingsPath, res.StatusCode)
-	}
-	sec := recordingRolesSection(t, parseHTML(t, res))
-	if got := entryIDs(t, sec); !slices.Equal(got, want) {
-		t.Fatalf("the section shows entries %v, want %v: the recording roles saves alone, newest first", got, want)
-	}
-	newest := findElement(sec, "", "data-entry", strconv.FormatInt(want[0], 10))
-	change := findElement(newest, "", "data-change", "recording_roles")
-	if change == nil {
-		t.Fatal("the newest entry has no data-change=recording_roles element")
-	}
-	if got := fieldText(t, change, "before"); got != "Military Police" {
-		t.Errorf("newest entry before = %q, want Military Police", got)
-	}
-	if got := fieldText(t, change, "after"); got != "Regimental HQ" {
-		t.Errorf("newest entry after = %q, want Regimental HQ", got)
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want 200", settingsPath, res.StatusCode)
+			}
+			sec := findElement(parseHTML(t, res), "section", "data-section", tc.section)
+			if sec == nil {
+				t.Fatalf("page has no section under data-section=%s", tc.section)
+			}
+			if got := entryIDs(t, sec); !slices.Equal(got, want) {
+				t.Fatalf("the section shows entries %v, want %v: its own saves alone, newest first", got, want)
+			}
+			newest := findElement(sec, "", "data-entry", strconv.FormatInt(want[0], 10))
+			change := findElement(newest, "", "data-change", tc.field)
+			if change == nil {
+				t.Fatalf("the newest entry has no data-change=%s element", tc.field)
+			}
+			if got := fieldText(t, change, "before"); got != "Military Police" {
+				t.Errorf("newest entry before = %q, want Military Police", got)
+			}
+			if got := fieldText(t, change, "after"); got != "Regimental HQ" {
+				t.Errorf("newest entry after = %q, want Regimental HQ", got)
+			}
+		})
 	}
 }
 

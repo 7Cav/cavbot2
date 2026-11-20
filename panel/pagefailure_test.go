@@ -183,6 +183,20 @@ func (s *ctxStore) ListForumGroupChanges(ctx context.Context, limit int) ([]stor
 	return s.Fake.ListForumGroupChanges(ctx, limit)
 }
 
+func (s *ctxStore) GetWarningImmuneRoles(ctx context.Context, guildID string) (store.WarningImmuneRoles, error) {
+	if err := s.gate(ctx, "GetWarningImmuneRoles"); err != nil {
+		return store.WarningImmuneRoles{}, err
+	}
+	return s.Fake.GetWarningImmuneRoles(ctx, guildID)
+}
+
+func (s *ctxStore) ListWarningImmuneRoleChanges(ctx context.Context, limit int) ([]store.ChangeLogEntry, error) {
+	if err := s.gate(ctx, "ListWarningImmuneRoleChanges"); err != nil {
+		return nil, err
+	}
+	return s.Fake.ListWarningImmuneRoleChanges(ctx, limit)
+}
+
 func (s *ctxStore) ListFoxholeRecords(ctx context.Context, guildID string) ([]store.FoxholeRecord, error) {
 	if err := s.gate(ctx, "ListFoxholeRecords"); err != nil {
 		return nil, err
