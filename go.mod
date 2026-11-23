@@ -10,9 +10,9 @@ require (
 	github.com/getsentry/sentry-go v0.50.0
 	github.com/go-logfmt/logfmt v0.6.1
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/joho/godotenv v1.5.1
-	github.com/pressly/goose/v3 v3.30.0
+	github.com/pressly/goose/v3 v3.30.1
 	github.com/thomas-vilte/dave-go v0.5.1
 	golang.org/x/oauth2 v0.38.0
 	golang.org/x/sync v0.25.0
@@ -26,7 +26,7 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/klauspost/compress v1.20.4 // indirect
-	github.com/mfridman/interpolate v0.0.2 // indirect
+	github.com/mfridman/interpolate v0.2.0 // indirect
 	github.com/sasha-s/go-csync v0.0.0-20240107134140-fcbab37b09ad // indirect
 	github.com/sethvargo/go-retry v0.5.0 // indirect
 	github.com/thomas-vilte/mls-go v1.6.0 // indirect
